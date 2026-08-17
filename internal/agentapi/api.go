@@ -19,6 +19,7 @@ import (
 
 	"github.com/jnk/deadlocker/internal/casedef"
 	"github.com/jnk/deadlocker/internal/engine"
+	"github.com/jnk/deadlocker/internal/store"
 )
 
 // API bundles the library and run manager behind operations.
@@ -27,10 +28,51 @@ type API struct {
 	mgr  *engine.Manager
 	hub  *Hub
 	jobs *Jobs
+	// versions is optional: without it scenarios still save, they just are not
+	// kept in history.
+	versions *store.Store
 }
 
 func New(lib *casedef.Library, mgr *engine.Manager, hub *Hub) *API {
 	return &API{lib: lib, mgr: mgr, hub: hub, jobs: NewJobs()}
+}
+
+// UseVersions attaches the revision store and installs the library's save hook,
+// so every scenario write — by hand, from the chat, or over MCP — is recorded.
+func (a *API) UseVersions(s *store.Store) {
+	a.versions = s
+	if s == nil {
+		a.lib.SetRecorder(nil)
+		return
+	}
+	a.lib.SetRecorder(func(c *casedef.Case, source []byte, note string) {
+		if c == nil || c.ID == "" {
+			return
+		}
+		// A failure here must not break the save: the YAML file is the source of
+		// truth and is already written by this point.
+		_, _, _ = s.RecordScenario(c.ID, c.Name, c.Path, string(source), note)
+	})
+}
+
+// SeedVersions records a baseline revision for every scenario whose current
+// source is not already the newest one on file. It runs at startup so the
+// examples shipped with the app, and any edit made outside it, have something
+// to roll back to rather than history starting at the first in-app change.
+func (a *API) SeedVersions(note string) int {
+	if a.versions == nil {
+		return 0
+	}
+	n := 0
+	for _, c := range a.lib.List() {
+		if c.ID == "" || c.Source == "" {
+			continue
+		}
+		if _, written, err := a.versions.RecordScenario(c.ID, c.Name, c.Path, c.Source, note); err == nil && written {
+			n++
+		}
+	}
+	return n
 }
 
 // randomBytes is used for job ids.
@@ -250,7 +292,7 @@ func (a *API) CreateScenario(ctx context.Context, in CreateScenarioInput) (SaveS
 			"a scenario with id %q already exists at %s; use update_scenario to change it, or pass a different path",
 			candidate, existing.Path)
 	}
-	saved, err := a.lib.Save(path, []byte(in.YAML))
+	saved, err := a.lib.SaveNote(path, []byte(in.YAML), "created via "+SourceOf(ctx))
 	if err != nil {
 		return SaveScenarioOutput{}, err
 	}
@@ -264,6 +306,7 @@ func (a *API) CreateScenario(ctx context.Context, in CreateScenarioInput) (SaveS
 type UpdateScenarioInput struct {
 	ID   string `json:"id" jsonschema:"the scenario to replace"`
 	YAML string `json:"yaml" jsonschema:"the complete new scenario YAML"`
+	Note string `json:"note,omitempty" jsonschema:"a short description of the change, kept in the scenario's version history"`
 }
 
 // UpdateScenario rewrites an existing scenario in place, validating first.
@@ -275,13 +318,140 @@ func (a *API) UpdateScenario(ctx context.Context, in UpdateScenarioInput) (SaveS
 	if _, err := casedef.Parse([]byte(in.YAML)); err != nil {
 		return SaveScenarioOutput{}, fmt.Errorf("scenario is not valid: %w", err)
 	}
-	saved, err := a.lib.Save(existing.Path, []byte(in.YAML))
+	note := in.Note
+	if strings.TrimSpace(note) == "" {
+		note = "updated via " + SourceOf(ctx)
+	}
+	saved, err := a.lib.SaveNote(existing.Path, []byte(in.YAML), note)
 	if err != nil {
 		return SaveScenarioOutput{}, err
 	}
 	a.note(ctx, Activity{
 		Kind: KindScenarioUpdated, Tool: "update_scenario", ScenarioID: saved.ID,
 		Summary: fmt.Sprintf("updated scenario %q", saved.Name),
+	})
+	return SaveScenarioOutput{ID: saved.ID, Path: saved.Path, Scenario: summarise(saved), Warnings: lintCase(saved)}, nil
+}
+
+// ---------------------------------------------------------- scenario history
+
+// ScenarioVersionSummary is one revision without its source, for listings.
+type ScenarioVersionSummary struct {
+	Version   uint64    `json:"version"`
+	SavedAt   time.Time `json:"saved_at"`
+	Note      string    `json:"note,omitempty"`
+	Name      string    `json:"name,omitempty"`
+	Path      string    `json:"path,omitempty"`
+	Lines     int       `json:"lines"`
+	Bytes     int       `json:"bytes"`
+	IsCurrent bool      `json:"is_current"`
+}
+
+type ListScenarioVersionsInput struct {
+	ID    string `json:"id" jsonschema:"the scenario whose history to list"`
+	Limit int    `json:"limit,omitempty" jsonschema:"maximum revisions to return, newest first"`
+}
+
+type ListScenarioVersionsOutput struct {
+	ID       string                   `json:"id"`
+	Versions []ScenarioVersionSummary `json:"versions"`
+}
+
+// ListScenarioVersions returns a scenario's revision history, newest first.
+func (a *API) ListScenarioVersions(ctx context.Context, in ListScenarioVersionsInput) (ListScenarioVersionsOutput, error) {
+	c, err := a.mustCase(in.ID)
+	if err != nil {
+		return ListScenarioVersionsOutput{}, err
+	}
+	if a.versions == nil {
+		return ListScenarioVersionsOutput{ID: c.ID}, nil
+	}
+	list, err := a.versions.ScenarioVersions(c.ID, c.Source, in.Limit)
+	if err != nil {
+		return ListScenarioVersionsOutput{}, err
+	}
+	out := ListScenarioVersionsOutput{ID: c.ID, Versions: make([]ScenarioVersionSummary, 0, len(list))}
+	for _, v := range list {
+		out.Versions = append(out.Versions, ScenarioVersionSummary{
+			Version: v.Version, SavedAt: v.SavedAt, Note: v.Note,
+			Name: v.Name, Path: v.Path,
+			Lines: strings.Count(strings.TrimRight(v.Source, "\n"), "\n") + 1,
+			Bytes: len(v.Source), IsCurrent: v.IsCurrent,
+		})
+	}
+	return out, nil
+}
+
+type GetScenarioVersionInput struct {
+	ID      string `json:"id" jsonschema:"the scenario"`
+	Version uint64 `json:"version" jsonschema:"which revision to read"`
+}
+
+type GetScenarioVersionOutput struct {
+	ID      string `json:"id"`
+	Version uint64 `json:"version"`
+	SavedAt string `json:"saved_at"`
+	Note    string `json:"note,omitempty"`
+	YAML    string `json:"yaml"`
+}
+
+// GetScenarioVersion returns the YAML a scenario had at one revision.
+func (a *API) GetScenarioVersion(ctx context.Context, in GetScenarioVersionInput) (GetScenarioVersionOutput, error) {
+	if a.versions == nil {
+		return GetScenarioVersionOutput{}, errors.New("scenario history is not available")
+	}
+	c, err := a.mustCase(in.ID)
+	if err != nil {
+		return GetScenarioVersionOutput{}, err
+	}
+	v, err := a.versions.ScenarioVersion(c.ID, in.Version)
+	if err != nil {
+		return GetScenarioVersionOutput{}, err
+	}
+	return GetScenarioVersionOutput{
+		ID: c.ID, Version: v.Version, SavedAt: v.SavedAt.Format(time.RFC3339),
+		Note: v.Note, YAML: v.Source,
+	}, nil
+}
+
+type RestoreScenarioVersionInput struct {
+	ID      string `json:"id" jsonschema:"the scenario to roll back"`
+	Version uint64 `json:"version" jsonschema:"the revision to restore"`
+}
+
+// RestoreScenarioVersion writes an old revision back to disk.
+//
+// History is append-only: the restore itself becomes the newest revision, so
+// the state being replaced is still reachable and a rollback can be undone.
+func (a *API) RestoreScenarioVersion(ctx context.Context, in RestoreScenarioVersionInput) (SaveScenarioOutput, error) {
+	if a.versions == nil {
+		return SaveScenarioOutput{}, errors.New("scenario history is not available")
+	}
+	c, err := a.mustCase(in.ID)
+	if err != nil {
+		return SaveScenarioOutput{}, err
+	}
+	v, err := a.versions.ScenarioVersion(c.ID, in.Version)
+	if err != nil {
+		return SaveScenarioOutput{}, err
+	}
+	if v.Source == c.Source {
+		return SaveScenarioOutput{}, fmt.Errorf("version %d is already what is on disk", in.Version)
+	}
+	// The old revision still has to parse: a scenario saved before a format
+	// change could otherwise be restored into a broken file.
+	if _, err := casedef.Parse([]byte(v.Source)); err != nil {
+		return SaveScenarioOutput{}, fmt.Errorf("version %d no longer parses: %w", in.Version, err)
+	}
+
+	saved, err := a.lib.SaveNote(c.Path, []byte(v.Source),
+		fmt.Sprintf("restored version %d", in.Version))
+	if err != nil {
+		return SaveScenarioOutput{}, err
+	}
+	a.note(ctx, Activity{
+		Kind: KindScenarioUpdated, Tool: "restore_scenario_version", ScenarioID: saved.ID,
+		Summary: fmt.Sprintf("restored %q to version %d", saved.Name, in.Version),
 	})
 	return SaveScenarioOutput{ID: saved.ID, Path: saved.Path, Scenario: summarise(saved), Warnings: lintCase(saved)}, nil
 }

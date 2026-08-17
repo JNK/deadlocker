@@ -135,6 +135,12 @@ func templateFuncs() template.FuncMap {
 			}
 			return strconv.Itoa(*v)
 		},
+		"optInt64": func(v *int64) string {
+			if v == nil {
+				return ""
+			}
+			return strconv.FormatInt(*v, 10)
+		},
 		// A tag always gets the same tone, so "gap-lock" reads the same colour
 		// everywhere it appears.
 		"tagTone": func(tag string) int {
@@ -200,6 +206,12 @@ func (s *Server) Routes() http.Handler {
 	// The scenario editor writes back to the same file rather than forcing a
 	// clone.
 	mux.HandleFunc("GET /edit/{id}", s.handleEdit)
+
+	// Scenario history. Every save is recorded, so an edit that turns out to be
+	// wrong is one click away from being undone.
+	mux.HandleFunc("GET /api/case/{id}/versions", s.handleScenarioVersions)
+	mux.HandleFunc("GET /api/case/{id}/versions/{version}", s.handleScenarioVersion)
+	mux.HandleFunc("POST /api/case/{id}/versions/{version}/restore", s.handleScenarioRestore)
 
 	mux.HandleFunc("GET /settings", s.handleSettingsPage)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsSave)
@@ -269,6 +281,8 @@ type pageData struct {
 	Case        *casedef.Case
 	Source      string
 	Description template.HTML
+	// VersionCount is how many revisions the scenario has, shown on the tab.
+	VersionCount int
 
 	Sequence []sequenceRow
 	Run      *engine.RunState
@@ -438,6 +452,11 @@ func (s *Server) handleCase(w http.ResponseWriter, r *http.Request) {
 	pd.Source = c.Source
 	pd.Description = markdown.Render(c.Description)
 	pd.History = s.mgr.History().ForCase(c.ID)
+	// The count goes on the tab so the history is visible without opening it;
+	// the revisions themselves load only when the tab is.
+	if counts, err := s.store.ScenarioVersionCounts(); err == nil {
+		pd.VersionCount = counts[c.ID]
+	}
 	for i, step := range c.Steps {
 		actor, _ := c.Actor(step.Actor)
 		pd.Sequence = append(pd.Sequence, sequenceRow{
@@ -523,6 +542,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path   string `json:"path"`
 		Source string `json:"source"`
+		Note   string `json:"note"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
@@ -532,7 +552,11 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "a file name is required"})
 		return
 	}
-	c, err := s.lib.Save(req.Path, []byte(req.Source))
+	note := strings.TrimSpace(req.Note)
+	if note == "" {
+		note = "edited in the browser"
+	}
+	c, err := s.lib.SaveNote(req.Path, []byte(req.Source), note)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

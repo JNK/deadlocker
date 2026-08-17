@@ -216,6 +216,56 @@ func main() {
 	})
 	fmt.Printf("create with a taken id:    %s\n", firstLine(out))
 
+	// --- version history -------------------------------------------------
+	// Two writes have happened by now (create, then update), so the scenario
+	// should have two revisions with the create still readable.
+	fmt.Println("\n--- version history ---")
+	out = call(ctx, session, "list_scenario_versions", map[string]any{"id": created.ID})
+	var vers struct {
+		Versions []struct {
+			Version   uint64 `json:"version"`
+			Note      string `json:"note"`
+			IsCurrent bool   `json:"is_current"`
+		} `json:"versions"`
+	}
+	decode(out, &vers)
+	for _, v := range vers.Versions {
+		marker := ""
+		if v.IsCurrent {
+			marker = "  <- on disk"
+		}
+		fmt.Printf("  v%d  %s%s\n", v.Version, v.Note, marker)
+	}
+
+	out = call(ctx, session, "get_scenario_version", map[string]any{
+		"id": created.ID, "version": 1,
+	})
+	var v1 struct {
+		YAML string `json:"yaml"`
+	}
+	decode(out, &v1)
+	fmt.Printf("get_scenario_version v1: %d bytes, REPEATABLE READ present=%v\n",
+		len(v1.YAML), strings.Contains(v1.YAML, "REPEATABLE READ"))
+
+	// Restoring must put the old isolation back and append, not truncate.
+	out = call(ctx, session, "restore_scenario_version", map[string]any{
+		"id": created.ID, "version": 1,
+	})
+	decode(out, &up)
+	fmt.Printf("restore v1: isolation is now %s\n", up.Scenario.Isolation)
+
+	out = call(ctx, session, "list_scenario_versions", map[string]any{"id": created.ID})
+	decode(out, &vers)
+	fmt.Printf("after restore: %d version(s), newest is v%d (%s)\n",
+		len(vers.Versions), vers.Versions[0].Version, vers.Versions[0].Note)
+
+	// Restoring what is already live is a no-op the server should refuse
+	// rather than record as a fresh revision.
+	out = call(ctx, session, "restore_scenario_version", map[string]any{
+		"id": created.ID, "version": 1,
+	})
+	fmt.Printf("restore the live version: %s\n", firstLine(out))
+
 	out = call(ctx, session, "list_history", map[string]any{"limit": 3})
 	fmt.Printf("\nlist_history: %s\n", firstLine(out))
 

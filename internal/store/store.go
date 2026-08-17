@@ -13,15 +13,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
 
 var (
-	bucketConfig = []byte("config_versions")
-	bucketMeta   = []byte("meta")
-	keyCurrent   = []byte("current_version")
+	bucketConfig    = []byte("config_versions")
+	bucketMeta      = []byte("meta")
+	keyCurrent      = []byte("current_version")
+	bucketScenarios = []byte("scenario_versions")
 )
 
 // LLMConfig points the built-in chat at an OpenAI-compatible endpoint.
@@ -38,8 +40,21 @@ type LLMConfig struct {
 	// server's own defaults apply — which is what you want with a local model
 	// that already behaves, and avoids overriding a good default with a
 	// worse guess.
-	Temperature *float64 `json:"temperature,omitempty"`
-	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	Temperature      *float64 `json:"temperature,omitempty"`
+	MaxTokens        *int     `json:"max_tokens,omitempty"`
+	TopP             *float64 `json:"top_p,omitempty"`
+	TopK             *int64   `json:"top_k,omitempty"`
+	MinP             *float64 `json:"min_p,omitempty"`
+	RepeatPenalty    *float64 `json:"repeat_penalty,omitempty"`
+	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
+	Seed             *int64   `json:"seed,omitempty"`
+	// Effort is free text (low, medium, high, or whatever a given server
+	// accepts) sent as reasoning_effort.
+	Effort string `json:"effort,omitempty"`
+	// Extra is a JSON object of additional request body fields, for anything a
+	// particular server supports that has no field of its own here.
+	Extra string `json:"extra,omitempty"`
 
 	// MaxSteps caps agent tool-calling rounds so a confused model cannot loop
 	// forever against a real MySQL server. Unset falls back to DefaultMaxSteps
@@ -85,6 +100,20 @@ func (c *Config) Normalise() {
 	}
 }
 
+// ExtraParams parses the free-form kwargs object. An empty value is not an
+// error; malformed JSON is, so it can be reported when saving rather than
+// silently dropped at request time.
+func (c LLMConfig) ExtraParams() (map[string]any, error) {
+	if strings.TrimSpace(c.Extra) == "" {
+		return nil, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(c.Extra), &out); err != nil {
+		return nil, fmt.Errorf("extra parameters must be a JSON object: %w", err)
+	}
+	return out, nil
+}
+
 // Ready reports whether the chat has enough configuration to run.
 func (c Config) Ready() bool {
 	return c.LLM.Enabled && c.LLM.BaseURL != "" && c.LLM.Model != ""
@@ -128,7 +157,7 @@ func Open(path string) (*Store, error) {
 	s := &Store{db: db, path: path}
 
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketConfig, bucketMeta} {
+		for _, b := range [][]byte{bucketConfig, bucketMeta, bucketScenarios} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}

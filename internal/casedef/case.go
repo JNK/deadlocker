@@ -262,6 +262,12 @@ func slugify(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// SaveRecorder is notified after a case has been written to disk. It is how
+// scenario history is kept without the library having to know what a store is,
+// and it hangs off the library rather than off each caller so that every write
+// is recorded no matter which one made it.
+type SaveRecorder func(c *Case, source []byte, note string)
+
 // Library is the on-disk collection of cases under a root directory.
 type Library struct {
 	Root string
@@ -271,11 +277,19 @@ type Library struct {
 	order []string
 	// broken records files that failed to parse, so the UI can show why
 	// instead of silently omitting them.
-	broken map[string]string
+	broken   map[string]string
+	recorder SaveRecorder
 }
 
 func NewLibrary(root string) *Library {
 	return &Library{Root: root, cases: map[string]*Case{}, broken: map[string]string{}}
+}
+
+// SetRecorder installs the save hook. Passing nil disables recording.
+func (l *Library) SetRecorder(r SaveRecorder) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.recorder = r
 }
 
 // Load rescans the root directory. It is safe to call repeatedly; the UI calls
@@ -414,6 +428,12 @@ func (l *Library) Categories() []Category {
 // Save writes a case to the library, creating or overwriting a file. relPath is
 // relative to the library root and must stay inside it.
 func (l *Library) Save(relPath string, data []byte) (*Case, error) {
+	return l.SaveNote(relPath, data, "")
+}
+
+// SaveNote is Save with a note attached to the recorded revision, describing
+// what the write was for.
+func (l *Library) SaveNote(relPath string, data []byte, note string) (*Case, error) {
 	c, err := Parse(data)
 	if err != nil {
 		return nil, err
@@ -452,12 +472,22 @@ func (l *Library) Save(relPath string, data []byte) (*Case, error) {
 	// are derived from the file's location during Load, so the parsed copy has
 	// neither. Callers rely on the id to address what they just wrote.
 	l.mu.RLock()
-	defer l.mu.RUnlock()
+	saved := c
+	saved.Path = clean
 	for _, loaded := range l.cases {
 		if loaded.Path == clean {
-			return loaded, nil
+			saved = loaded
+			break
 		}
 	}
-	c.Path = clean
-	return c, nil
+	recorder := l.recorder
+	l.mu.RUnlock()
+
+	// Recording happens after the reload so the revision carries the derived id
+	// rather than the empty one the parsed copy has. A failure to record must
+	// not fail the write: the file on disk is the source of truth.
+	if recorder != nil {
+		recorder(saved, data, note)
+	}
+	return saved, nil
 }

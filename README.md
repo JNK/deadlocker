@@ -244,8 +244,10 @@ claude mcp add --transport http deadlocker http://127.0.0.1:8899/mcp
 ```
 
 **Tools** — `list_scenarios`, `get_scenario`, `validate_scenario`,
-`create_scenario`, `update_scenario`, `start_run`, `step_run`, `run_all`,
-`get_run`, `get_locks`, `close_run`, `list_history`, `compare_runs`.
+`create_scenario`, `update_scenario`, `list_scenario_versions`,
+`get_scenario_version`, `restore_scenario_version`, `start_run`, `step_run`,
+`run_all`, `get_run`, `get_locks`, `close_run`, `list_history`,
+`compare_runs`.
 
 **Resources** — `deadlocker://docs/format` (the scenario format, which an
 authoring agent should read first), `deadlocker://scenarios`,
@@ -314,6 +316,32 @@ drift apart.
 Configuration is stored in bbolt and versioned. Every save appends a revision;
 restoring copies an old one forward rather than rewriting history, so a base URL
 that used to work is always one click away.
+
+Sampling is entirely optional — leave a field empty and nothing is sent, so the
+model server's own default applies. Beyond temperature and max tokens there are
+top-p, top-k, min-p, repeat/presence/frequency penalty, seed and a free-text
+reasoning effort, plus a **kwargs JSON object** merged into the request body
+verbatim for anything else a given server accepts. The knobs the OpenAI schema
+has no field for (`top_k`, `min_p`, `repeat_penalty`, `reasoning_effort`) are
+written into the body directly, because local servers take far more than the
+standard schema exposes. Keys in the JSON object override the fields above it.
+
+## Scenario versions
+
+Scenarios are versioned the same way. Every write — from the editor, the
+assistant, or an MCP client — appends a revision to bbolt with a note saying
+where it came from, and the scenarios already on disk get a baseline revision at
+startup. The **Versions** tab on a scenario lists them newest first, previews
+any revision's YAML, and restores one in a click.
+
+Restoring is append-only too: the restore becomes the newest revision, so
+rolling back can itself be rolled back. A save whose source is unchanged is not
+recorded, so re-saving an untouched file does not fill the history. An old
+revision that no longer parses is refused rather than restored into a broken
+file.
+
+The YAML file on disk stays the source of truth; the store is a record of what
+it used to say, not a second place to read the current scenario from.
 
 ## Analysis
 
@@ -399,7 +427,7 @@ browser ──SSE──► web (html/template + vanilla JS, embedded)
   place an ability is added.
 - `internal/mcpserver` — MCP tools and resources over streamable HTTP.
 - `internal/chat` — the assistant, on `charm.land/fantasy`.
-- `internal/store` — bbolt-backed versioned configuration.
+- `internal/store` — bbolt-backed versioned configuration and scenario history.
 - `internal/wire` — MySQL packet framing and a decoding pass-through proxy,
   text and binary result rows.
 - `internal/engine` — run orchestration, step-through control, lock

@@ -402,6 +402,9 @@ code, pre, .mono { font-family: var(--mono); }
   font-size: 13px;
 }
 .input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* The fixed height above suits a single-line control; a textarea has to size
+   itself from its rows attribute instead. */
+textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vertical; }
 .input-sm { height: 27px; font-size: 12.5px; width: 240px; }
 
 select {
@@ -699,26 +702,23 @@ pre.error-text { color: var(--danger); border-color: var(--danger); background: 
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
   box-shadow: var(--shadow-1);
   text-align: left;
   font: inherit;
+  /* A button does not inherit colour: without this the label renders in the
+     UA's default text colour, which is unreadable on a dark surface. */
+  color: var(--text);
   cursor: pointer;
-  transition: box-shadow .14s, border-color .14s, opacity .14s;
+  transition: box-shadow .14s, border-color .14s, background .14s, opacity .14s;
 }
 .step-card:hover { box-shadow: var(--shadow-2); }
 .step-card.is-selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .step-card.status-pending { opacity: .62; }
-.step-card.accent-blue { border-left-color: var(--a-blue); }
-.step-card.accent-amber { border-left-color: var(--a-amber); }
-.step-card.accent-violet { border-left-color: var(--a-violet); }
-.step-card.accent-teal { border-left-color: var(--a-teal); }
-.step-card.accent-rose { border-left-color: var(--a-rose); }
 
 .step-card-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 6px; }
-.step-label { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.step-label { font-size: 13px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
 .step-card .step-sql {
   display: block;
   padding: 7px 9px;
@@ -749,12 +749,23 @@ pre.error-text { color: var(--danger); border-color: var(--danger); background: 
 .status-done .step-status { background: var(--ok-soft); color: var(--ok); }
 .status-error .step-status { background: var(--danger-soft); color: var(--danger); }
 
+.step-card.status-done {
+  border-color: color-mix(in srgb, var(--ok) 42%, var(--border));
+  background: color-mix(in srgb, var(--ok) 7%, var(--surface));
+}
+.step-card.status-running {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
 .step-card.status-blocked {
   border-color: var(--warn);
-  background: linear-gradient(90deg, var(--warn-soft), var(--surface) 42%);
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
 }
 .step-card.status-blocked .step-status { animation: pulse 1.4s ease-in-out infinite; }
-.step-card.status-error { border-color: var(--danger); }
+.step-card.status-error {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
 @keyframes pulse { 50% { opacity: .45; } }
 
 .mini {
@@ -2759,3 +2770,50 @@ body::before {
 .shrink-status { margin-bottom: 12px; }
 .shrink-yaml > summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); margin-bottom: 8px; }
 .analysis-permalink { margin-top: 14px; font-size: 11.5px; }
+
+/* ------------------------------------------------------- scenario versions */
+/* One row per revision, laid out on a grid so the version number, timestamp
+   and note line up down the list however long any single note is. */
+.version-list { display: flex; flex-direction: column; gap: 8px; }
+.version-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+.version-row.is-current {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.version-head {
+  display: grid;
+  grid-template-columns: 44px 150px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+}
+.version-num { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.version-when { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.version-note {
+  font-size: 13px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.version-current {
+  font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 7px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.version-meta { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.version-actions { display: flex; gap: 6px; }
+.version-source {
+  margin: 0; border-top: 1px solid var(--border);
+  max-height: 420px; border-radius: 0;
+}
+
+/* Below the grid's comfortable width the columns collapse rather than crushing
+   the note into an ellipsis two characters wide. */
+@media (max-width: 860px) {
+  .version-head { grid-template-columns: 44px minmax(0, 1fr); }
+  .version-when, .version-meta { grid-column: 2; }
+  .version-actions { grid-column: 2; }
+}

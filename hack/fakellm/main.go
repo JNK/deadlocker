@@ -14,8 +14,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -34,6 +36,7 @@ type chatRequest struct {
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:11500", "address to listen on")
+	dump := flag.String("dump", "", "write each raw request body to this file, one JSON object per line")
 	flag.Parse()
 
 	mux := http.NewServeMux()
@@ -50,8 +53,22 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// The raw body is what makes the sampling settings testable: they are
+		// injected into it directly, so decoding into a struct would hide them.
+		if *dump != "" {
+			if f, err := os.OpenFile(*dump, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+				fmt.Fprintf(f, "%s\n", body)
+				f.Close()
+			}
+		}
+
 		var req chatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(body, &req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

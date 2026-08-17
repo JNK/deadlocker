@@ -107,8 +107,23 @@ func registerTools(srv *mcp.Server, api *agentapi.API) {
 		api.CreateScenario)
 
 	tool(srv, "update_scenario", "Update a scenario",
-		"Replace an existing scenario's YAML in place. Validates before writing.",
+		"Replace an existing scenario's YAML in place. Validates before writing. "+
+			"Every write is kept in the scenario's version history, so pass a short note describing the change.",
 		api.UpdateScenario)
+
+	tool(srv, "list_scenario_versions", "List a scenario's versions",
+		"Show the revision history of a scenario, newest first. Every save is recorded, "+
+			"so an earlier state can always be read back or restored.",
+		api.ListScenarioVersions)
+
+	tool(srv, "get_scenario_version", "Read one scenario version",
+		"Return the YAML a scenario had at a given revision, without changing anything on disk.",
+		api.GetScenarioVersion)
+
+	tool(srv, "restore_scenario_version", "Restore a scenario version",
+		"Write an earlier revision back to disk. History is append-only: the restore becomes "+
+			"the newest revision, so it can itself be undone.",
+		api.RestoreScenarioVersion)
 
 	tool(srv, "start_run", "Start a run",
 		"Prepare a run from a saved scenario (scenario_id) or from ad-hoc YAML. "+

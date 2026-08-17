@@ -155,6 +155,14 @@ add a third actor rather than reusing a blocked one.
 2. Call ` + "`validate_scenario`" + ` and fix any error or warning.
 3. Call ` + "`start_run`" + `, then ` + "`step_run`" + ` through the whole thing to confirm it
    behaves as claimed. Each step returns the lock state it produced.
-4. Only then ` + "`create_scenario`" + ` or ` + "`update_scenario`" + `.
+4. Only then ` + "`create_scenario`" + ` or ` + "`update_scenario`" + `. Pass a short
+   ` + "`note`" + ` when updating: every write is kept in the scenario's version
+   history and the note is what makes that history readable later.
 5. Call ` + "`close_run`" + ` when done, which drops the scratch database.
+
+Editing is safe to attempt: nothing is ever overwritten irrecoverably. Use
+` + "`list_scenario_versions`" + ` to see what a scenario used to say,
+` + "`get_scenario_version`" + ` to read one revision, and
+` + "`restore_scenario_version`" + ` to put it back. Restoring appends rather than
+truncates, so it can itself be undone.
 `

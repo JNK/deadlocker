@@ -84,6 +84,11 @@
       if (pushHash) {
         history.replaceState(null, '', '#' + name + '=' + tab);
       }
+      // A panel whose content is expensive can load itself on first reveal
+      // rather than on page load.
+      document.dispatchEvent(new CustomEvent('dl-tab', {
+        detail: { group: name, tab: tab }
+      }));
     }
 
     group.querySelectorAll('[data-tab]').forEach(function (t) {

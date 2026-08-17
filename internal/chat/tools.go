@@ -60,6 +60,11 @@ func (s *Service) toolsFor(sess *Session, emit Emit) []fantasy.AgentTool {
 		bind("list_scenarios", "List the scenario library, optionally filtered.", api.ListScenarios),
 		bind("get_scenario", "Fetch one scenario in full, including its YAML source.", api.GetScenario),
 		bind("list_history", "List past runs with their outcomes.", api.ListHistory),
+		bind("list_scenario_versions", "List a scenario's revision history, newest first. "+
+			"Every save is recorded, so an earlier state can always be read back.",
+			api.ListScenarioVersions),
+		bind("get_scenario_version", "Read the YAML a scenario had at a given revision, "+
+			"without changing anything on disk.", api.GetScenarioVersion),
 	}
 
 	runTools := []fantasy.AgentTool{

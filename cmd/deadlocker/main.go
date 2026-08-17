@@ -125,6 +125,14 @@ func run() error {
 	// assistant so the two can never drift apart.
 	hub := agentapi.NewHub()
 	api := agentapi.New(lib, mgr, hub)
+
+	// Scenario history is recorded from here on, and the scenarios already on
+	// disk get a baseline revision so there is always something to roll back to.
+	api.UseVersions(st)
+	if n := api.SeedVersions("as found on disk"); n > 0 {
+		log.Printf("recorded a baseline version for %d scenario(s)", n)
+	}
+
 	assistant := chat.NewService(api, st)
 
 	srv, err := web.NewServer(web.Deps{

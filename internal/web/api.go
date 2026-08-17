@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,10 +118,19 @@ type settingsPayload struct {
 	Model       string `json:"model"`
 	// Sampling settings are pointers: absent means "leave it to the model
 	// server" rather than "use zero".
-	Temperature *float64 `json:"temperature"`
-	MaxTokens   *int     `json:"max_tokens"`
-	MaxSteps    *int     `json:"max_steps"`
-	Note        string   `json:"note"`
+	Temperature      *float64 `json:"temperature"`
+	MaxTokens        *int     `json:"max_tokens"`
+	TopP             *float64 `json:"top_p"`
+	TopK             *int64   `json:"top_k"`
+	MinP             *float64 `json:"min_p"`
+	RepeatPenalty    *float64 `json:"repeat_penalty"`
+	PresencePenalty  *float64 `json:"presence_penalty"`
+	FrequencyPenalty *float64 `json:"frequency_penalty"`
+	Seed             *int64   `json:"seed"`
+	Effort           string   `json:"effort"`
+	Extra            string   `json:"extra"`
+	MaxSteps         *int     `json:"max_steps"`
+	Note             string   `json:"note"`
 }
 
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +151,24 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	next.LLM.Model = req.Model
 	next.LLM.Temperature = req.Temperature
 	next.LLM.MaxTokens = req.MaxTokens
+	next.LLM.TopP = req.TopP
+	next.LLM.TopK = req.TopK
+	next.LLM.MinP = req.MinP
+	next.LLM.RepeatPenalty = req.RepeatPenalty
+	next.LLM.PresencePenalty = req.PresencePenalty
+	next.LLM.FrequencyPenalty = req.FrequencyPenalty
+	next.LLM.Seed = req.Seed
+	next.LLM.Effort = strings.TrimSpace(req.Effort)
+	next.LLM.Extra = strings.TrimSpace(req.Extra)
 	next.LLM.MaxSteps = req.MaxSteps
+
+	// The kwargs object is rejected here rather than at request time, so a typo
+	// surfaces while the settings page is still open instead of as a failed
+	// chat later.
+	if _, err := next.LLM.ExtraParams(); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 
 	// The browser never receives the stored key, so an empty field means
 	// "leave it alone". Clearing is an explicit action.
@@ -179,6 +207,57 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": saved.Version})
+}
+
+// ------------------------------------------------------- scenario versions
+
+// handleScenarioVersions lists a scenario's revision history.
+func (s *Server) handleScenarioVersions(w http.ResponseWriter, r *http.Request) {
+	out, err := s.api.ListScenarioVersions(r.Context(), agentapi.ListScenarioVersionsInput{
+		ID: r.PathValue("id"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "versions": out.Versions})
+}
+
+// handleScenarioVersion returns the YAML one revision held, for previewing
+// before restoring it.
+func (s *Server) handleScenarioVersion(w http.ResponseWriter, r *http.Request) {
+	version, err := strconv.ParseUint(r.PathValue("version"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid version"})
+		return
+	}
+	out, err := s.api.GetScenarioVersion(r.Context(), agentapi.GetScenarioVersionInput{
+		ID: r.PathValue("id"), Version: version,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "version": out.Version, "note": out.Note, "yaml": out.YAML,
+	})
+}
+
+// handleScenarioRestore writes an earlier revision back to the file.
+func (s *Server) handleScenarioRestore(w http.ResponseWriter, r *http.Request) {
+	version, err := strconv.ParseUint(r.PathValue("version"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid version"})
+		return
+	}
+	out, err := s.api.RestoreScenarioVersion(r.Context(), agentapi.RestoreScenarioVersionInput{
+		ID: r.PathValue("id"), Version: version,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": out.ID, "path": out.Path})
 }
 
 // handleModels proxies a /models request so the browser can populate the model

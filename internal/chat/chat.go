@@ -17,6 +17,7 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/openaicompat"
+	"github.com/openai/openai-go/v3/option"
 
 	"github.com/jnk/deadlocker/internal/agentapi"
 	"github.com/jnk/deadlocker/internal/store"
@@ -220,6 +221,11 @@ func (s *Service) Send(ctx context.Context, sess *Session, message string, emit 
 	call := fantasy.AgentStreamCall{
 		Prompt:   message,
 		Messages: history,
+		// Sampling settings fantasy models directly. Anything left unset is
+		// simply not sent, so the server's own default applies.
+		TopP:             cfg.LLM.TopP,
+		PresencePenalty:  cfg.LLM.PresencePenalty,
+		FrequencyPenalty: cfg.LLM.FrequencyPenalty,
 		OnTextDelta: func(_, text string) error {
 			reply.WriteString(text)
 			emit(Event{Type: EvDelta, Text: text})
@@ -303,6 +309,20 @@ func (s *Service) buildAgent(ctx context.Context, cfg store.Config, sess *Sessio
 	if cfg.LLM.APIKey != "" {
 		opts = append(opts, openaicompat.WithAPIKey(cfg.LLM.APIKey))
 	}
+
+	// Sampling knobs the OpenAI schema has no field for -- top_k, min_p, repeat
+	// penalty, reasoning effort -- plus anything in the free-form kwargs
+	// object, are written straight into the request body. Local servers accept
+	// far more than the standard schema exposes.
+	if body, err := extraBodyParams(cfg.LLM); err != nil {
+		return nil, err
+	} else if len(body) > 0 {
+		sdk := make([]option.RequestOption, 0, len(body))
+		for k, v := range body {
+			sdk = append(sdk, option.WithJSONSet(k, v))
+		}
+		opts = append(opts, openaicompat.WithSDKOptions(sdk...))
+	}
 	provider, err := openaicompat.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("could not reach the model provider: %w", err)
@@ -326,6 +346,41 @@ func (s *Service) buildAgent(ctx context.Context, cfg store.Config, sess *Sessio
 		opts2 = append(opts2, fantasy.WithMaxOutputTokens(int64(*cfg.LLM.MaxTokens)))
 	}
 	return fantasy.NewAgent(model, opts2...), nil
+}
+
+// extraBodyParams collects everything that has to be injected into the request
+// body rather than set through a typed option.
+func extraBodyParams(cfg store.LLMConfig) (map[string]any, error) {
+	out := map[string]any{}
+	// top_k is modelled by fantasy but dropped by the OpenAI-compatible
+	// provider, because the OpenAI schema has no such field. Local servers do
+	// accept it, so it goes into the body by hand.
+	if cfg.TopK != nil {
+		out["top_k"] = *cfg.TopK
+	}
+	if cfg.MinP != nil {
+		out["min_p"] = *cfg.MinP
+	}
+	if cfg.RepeatPenalty != nil {
+		out["repeat_penalty"] = *cfg.RepeatPenalty
+	}
+	if cfg.Seed != nil {
+		out["seed"] = *cfg.Seed
+	}
+	if strings.TrimSpace(cfg.Effort) != "" {
+		out["reasoning_effort"] = strings.TrimSpace(cfg.Effort)
+	}
+
+	extra, err := cfg.ExtraParams()
+	if err != nil {
+		return nil, err
+	}
+	// The kwargs object wins: it is the escape hatch, so it must be able to
+	// override anything set above.
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func truncate(s string, n int) string {
@@ -452,6 +507,18 @@ func describeToolCall(name, input string) (label, detail string) {
 		label, detail = "Closing the run", str("run_id")
 	case "list_history":
 		label = "Looking at past runs"
+	case "list_scenario_versions":
+		label, detail = "Reading the scenario's history", str("id")
+	case "get_scenario_version":
+		label = "Reading an earlier version"
+		if id := str("id"); id != "" {
+			detail = id + " v" + num("version")
+		}
+	case "restore_scenario_version":
+		label = "Restoring an earlier version"
+		if id := str("id"); id != "" {
+			detail = id + " v" + num("version")
+		}
 	case "compare_runs":
 		label = "Comparing two runs"
 	default:
@@ -525,6 +592,18 @@ func describeToolResult(name, raw string) (summary string, failed bool) {
 	case "list_history":
 		if runs, ok := arr("runs"); ok {
 			return plural(len(runs), "past run", "past runs"), false
+		}
+	case "list_scenario_versions":
+		if v, ok := arr("versions"); ok {
+			return plural(len(v), "version", "versions"), false
+		}
+	case "get_scenario_version":
+		if y, ok := payload["yaml"].(string); ok {
+			return plural(len(strings.Split(strings.TrimRight(y, "\n"), "\n")), "line", "lines"), false
+		}
+	case "restore_scenario_version":
+		if path, ok := payload["path"].(string); ok {
+			return "restored, written to " + path, false
 		}
 	case "compare_runs":
 		if n, ok := num("changed"); ok {

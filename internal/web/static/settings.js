@@ -70,6 +70,21 @@
   }
 
   document.getElementById('cfg-save').addEventListener('click', function () {
+    // The kwargs object is checked here too, so a typo is caught before the
+    // round trip and the field can be pointed at directly.
+    var extra = val('cfg-extra');
+    if (extra !== '') {
+      var parsed;
+      try { parsed = JSON.parse(extra); } catch (e) {
+        show('error', '<strong>Extra parameters are not valid JSON.</strong> ' + esc(e.message));
+        return;
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        show('error', '<strong>Extra parameters must be a JSON object</strong>, e.g. <code>{"top_a": 0.1}</code>.');
+        return;
+      }
+    }
+
     var payload = {
       enabled: document.getElementById('cfg-enabled').checked,
       base_url: val('cfg-base'),
@@ -79,6 +94,15 @@
       temperature: optNum('cfg-temp'),
       max_tokens: optInt('cfg-max-tokens'),
       max_steps: optInt('cfg-max-steps'),
+      top_p: optNum('cfg-top-p'),
+      top_k: optInt('cfg-top-k'),
+      min_p: optNum('cfg-min-p'),
+      repeat_penalty: optNum('cfg-repeat-penalty'),
+      presence_penalty: optNum('cfg-presence-penalty'),
+      frequency_penalty: optNum('cfg-frequency-penalty'),
+      seed: optInt('cfg-seed'),
+      effort: val('cfg-effort'),
+      extra: extra,
       note: ''
     };
     window.DL.postJSON('/api/settings', payload).then(function (res) {

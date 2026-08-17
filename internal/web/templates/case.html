@@ -37,6 +37,7 @@
         <button class="tab" data-tab="history" type="button">History {{if .History}}<span class="tab-count">({{len .History}})</span>{{end}}</button>
         <button class="tab" data-tab="analyse" type="button">Analyse</button>
         <button class="tab" data-tab="source" type="button">Source</button>
+        <button class="tab" data-tab="versions" type="button">Versions {{if .VersionCount}}<span class="tab-count">({{.VersionCount}})</span>{{end}}</button>
       </nav>
     </header>
 
@@ -194,6 +195,23 @@
           </div>
         </div>
       </section>
+
+      <section class="tab-panel" data-panel="versions">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Version history</h2>
+            <span class="muted">every save is kept</span>
+          </div>
+          <div class="panel-body">
+            <p class="muted" style="margin-top:0">
+              Editing a scenario — by hand, from the assistant, or over MCP — appends a
+              revision rather than overwriting what was there. Restoring is append-only
+              too, so a rollback can itself be rolled back.
+            </p>
+            <div id="versions-out" data-scenario="{{.Case.ID}}"></div>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
 </div>
@@ -210,6 +228,7 @@
 <script src="/static/yaml.js"></script>
 <script src="/static/runpane.js"></script>
 <script src="/static/case.js"></script>
+<script src="/static/versions.js"></script>
 <script src="/static/analyse.js"></script>
 {{template "assistant-mount" .}}
 </body>

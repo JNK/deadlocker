@@ -60,7 +60,7 @@
             <small id="cfg-model-hint">Reads <code>GET {base}/models</code> from the endpoint above.</small>
           </div>
 
-          <details class="advanced" {{if or .Config.LLM.Temperature .Config.LLM.MaxTokens .Config.LLM.MaxSteps}}open{{end}}>
+          <details class="advanced" {{if or .Config.LLM.Temperature .Config.LLM.MaxTokens .Config.LLM.MaxSteps .Config.LLM.TopP .Config.LLM.TopK .Config.LLM.MinP .Config.LLM.RepeatPenalty .Config.LLM.PresencePenalty .Config.LLM.FrequencyPenalty .Config.LLM.Seed .Config.LLM.Effort .Config.LLM.Extra}}open{{end}}>
             <summary>Sampling &amp; limits <span class="muted">optional</span></summary>
             <p class="muted advanced-note">
               Leave these empty and nothing is sent — the model server's own defaults apply.
@@ -83,6 +83,59 @@
                        placeholder="24" value="{{optInt .Config.LLM.MaxSteps}}">
                 <small>How many times the model may call tools in one reply. Always applied.</small>
               </div>
+              <div class="field">
+                <label for="cfg-top-p">Top&nbsp;P</label>
+                <input class="input" id="cfg-top-p" type="number" step="0.01" min="0" max="1"
+                       placeholder="model default" value="{{optFloat .Config.LLM.TopP}}">
+              </div>
+              <div class="field">
+                <label for="cfg-top-k">Top&nbsp;K</label>
+                <input class="input" id="cfg-top-k" type="number" step="1" min="0"
+                       placeholder="model default" value="{{optInt64 .Config.LLM.TopK}}">
+              </div>
+              <div class="field">
+                <label for="cfg-min-p">Min&nbsp;P</label>
+                <input class="input" id="cfg-min-p" type="number" step="0.01" min="0" max="1"
+                       placeholder="model default" value="{{optFloat .Config.LLM.MinP}}">
+                <small>Sent as <code>min_p</code>. Not in the OpenAI schema; llama.cpp and vLLM accept it.</small>
+              </div>
+              <div class="field">
+                <label for="cfg-repeat-penalty">Repeat penalty</label>
+                <input class="input" id="cfg-repeat-penalty" type="number" step="0.01" min="0"
+                       placeholder="model default" value="{{optFloat .Config.LLM.RepeatPenalty}}">
+                <small>Sent as <code>repeat_penalty</code>.</small>
+              </div>
+              <div class="field">
+                <label for="cfg-presence-penalty">Presence penalty</label>
+                <input class="input" id="cfg-presence-penalty" type="number" step="0.05" min="-2" max="2"
+                       placeholder="model default" value="{{optFloat .Config.LLM.PresencePenalty}}">
+              </div>
+              <div class="field">
+                <label for="cfg-frequency-penalty">Frequency penalty</label>
+                <input class="input" id="cfg-frequency-penalty" type="number" step="0.05" min="-2" max="2"
+                       placeholder="model default" value="{{optFloat .Config.LLM.FrequencyPenalty}}">
+              </div>
+              <div class="field">
+                <label for="cfg-seed">Seed</label>
+                <input class="input" id="cfg-seed" type="number" step="1"
+                       placeholder="random" value="{{optInt64 .Config.LLM.Seed}}">
+                <small>Makes a run reproducible where the server honours it.</small>
+              </div>
+              <div class="field">
+                <label for="cfg-effort">Reasoning effort</label>
+                <input class="input" id="cfg-effort" type="text"
+                       placeholder="model default" value="{{.Config.LLM.Effort}}">
+                <small>Free text, sent as <code>reasoning_effort</code>: <code>low</code>, <code>high</code>, or whatever your server takes.</small>
+              </div>
+            </div>
+            <div class="field">
+              <label for="cfg-extra">Extra parameters <span class="muted">JSON object</span></label>
+              <textarea class="input mono" id="cfg-extra" rows="4" spellcheck="false"
+                        placeholder='{"repetition_penalty": 1.05, "top_a": 0.1}'>{{.Config.LLM.Extra}}</textarea>
+              <small>
+                Merged into the request body verbatim, for anything the fields above do not cover.
+                Keys here override the fields above.
+              </small>
             </div>
           </details>
         </div>
