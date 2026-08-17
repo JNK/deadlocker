@@ -16,7 +16,7 @@
           {{if .Case.MySQL.Prepared}}<span class="chip">prepared statements</span>{{end}}
           <span class="chip">{{len .Case.Actors}} actors</span>
           <span class="chip">{{len .Case.Steps}} steps</span>
-          {{range .Case.Tags}}<span class="tag">{{.}}</span>{{end}}
+          {{range .Case.Tags}}<span class="tag tone-{{tagTone .}}">{{.}}</span>{{end}}
         </div>
       </div>
       <div class="page-actions">
@@ -162,6 +162,7 @@
 {{end}}
 
 <script src="/static/app.js"></script>
+<script src="/static/dialog.js"></script>
 <script src="/static/activity.js"></script>
 <script src="/static/yaml.js"></script>
 <script src="/static/case.js"></script>

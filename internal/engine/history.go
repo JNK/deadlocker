@@ -33,6 +33,8 @@ type Record struct {
 	// Outcome is the one-word summary, computed when the record is written so
 	// it is present in the JSON API as well as in templates.
 	Outcome string `json:"outcome"`
+	// Ephemeral marks a run of an unsaved draft, which no saved scenario owns.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 
 	// Counters, precomputed so listings do not have to walk the steps.
 	Submitted  int `json:"submitted"`
@@ -85,6 +87,7 @@ func snapshotRecord(r *Run) *Record {
 		Prepared:        r.Case.MySQL.Prepared,
 		StartedAt:       state.Started,
 		EndedAt:         time.Now(),
+		Ephemeral:       state.Ephemeral,
 		Status:          state.Status,
 		Steps:           steps,
 		DeadlockReport:  state.DeadlockReport,
@@ -176,7 +179,9 @@ func (h *History) ForCase(caseID string) []*Record {
 	defer h.mu.RUnlock()
 	var out []*Record
 	for _, rec := range h.records {
-		if rec.CaseID == caseID {
+		// A draft run can carry the same id as a saved scenario without being
+		// that scenario, so it must never appear in its history.
+		if rec.CaseID == caseID && !rec.Ephemeral {
 			out = append(out, rec)
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"html/template"
 	"io"
 	"net/http"
@@ -134,6 +135,13 @@ func templateFuncs() template.FuncMap {
 			}
 			return strconv.Itoa(*v)
 		},
+		// A tag always gets the same tone, so "gap-lock" reads the same colour
+		// everywhere it appears.
+		"tagTone": func(tag string) int {
+			h := fnv.New32a()
+			_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(tag))))
+			return int(h.Sum32()%8) + 1
+		},
 		"markdown": func(s string) template.HTML {
 			return markdown.Render(s)
 		},
@@ -178,7 +186,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /run/{id}/step", s.handleStep)
 	mux.HandleFunc("POST /run/{id}/play", s.handlePlay)
 	mux.HandleFunc("POST /run/{id}/snapshot", s.handleSnapshot)
+	mux.HandleFunc("POST /run/{id}/stop", s.handleStopRun)
 	mux.HandleFunc("POST /run/{id}/close", s.handleCloseRun)
+	mux.HandleFunc("GET /run/{id}/state", s.handleRunState)
 	mux.HandleFunc("GET /run/{id}/export", s.handleExport)
 
 	// The scenario editor writes back to the same file rather than forcing a
@@ -312,6 +322,10 @@ func (s *Server) base(title, nav string) *pageData {
 	}
 	for _, r := range s.mgr.List() {
 		st := r.State()
+		// Draft runs belong to the builder, not to the library.
+		if st.Ephemeral {
+			continue
+		}
 		pd.Runs = append(pd.Runs, runSummary{
 			ID: st.ID, CaseName: st.CaseName, Status: st.Status,
 			Cursor: st.Cursor, Total: st.Total,
@@ -478,8 +492,12 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
+		// Ad-hoc YAML from the playground or the builder draft: the run is real,
+		// but no saved scenario owns it, so it must not surface in the sidebar
+		// or in any scenario's history.
+		c.Ephemeral = true
 		if c.ID == "" {
-			c.ID = "playground"
+			c.ID = "draft"
 		}
 		s.startAndRespond(w, r, c, true)
 		return
@@ -613,6 +631,18 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "locks": snap})
 }
 
+// handleStopRun halts a run without tearing it down. When the assistant is the
+// one stepping it, its next tool call comes back saying a person intervened.
+func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
+	out, err := s.api.StopRun(agentapi.WithSource(r.Context(), agentapi.SourceUI),
+		agentapi.StopRunInput{RunID: r.PathValue("id"), Reason: "stopped by the user from the UI"})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stopped": out.Stopped})
+}
+
 func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.mgr.CloseRun(id); err != nil {
@@ -620,6 +650,19 @@ func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleRunState is a light snapshot of a run: its state and every step's
+// current status. The builder reconciles against this so a missed or dropped
+// event cannot leave the step list and the counter stale.
+func (s *Server) handleRunState(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	st := run.State()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st, "steps": run.Steps()})
 }
 
 // handleExport dumps the full event log, which is handy for sharing a

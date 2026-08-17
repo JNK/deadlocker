@@ -282,18 +282,23 @@ Two separate surfaces, because they are different jobs:
   (`/builder?from=<id>` to edit one). A modal sheet with the conversation on
   one side and the scenario taking shape on the other: a step list that fills in as it is drafted, with a
   Source tab that has the same YAML highlighting and schema-aware completion as
-  the playground editor. A test run stays inside the sheet and drives that
-  same step list live, with a stopwatch, rather than throwing you into another
-  tab. The assistant is instructed to draft, run, and correct before claiming
+  the playground editor. **Test run** starts the scenario and plays it to the end right there, driving
+  that step list live with a stopwatch, rather than throwing you into another
+  tab. While the assistant is driving a run of its own, the only control offered
+  is **Stop**, which halts it and tells the model through its own tool result
+  that a person intervened — so it explains itself instead of retrying.
+  Runs of an unsaved draft are ephemeral: real runs, but they never appear in
+  the sidebar or in a saved scenario's history. The assistant is instructed to draft, run, and correct before claiming
   anything works. This one is deliberately hard to close by accident: Escape is
   swallowed, the backdrop is inert, and closing with unsaved work asks first.
 
 The conversation is rendered as a sequence of blocks in the order things
 happened, not one bubble per turn. Reasoning streams into a windowed view about
 ten lines tall and collapses to "Thought for 8s" when it closes, expandable
-again. Tool calls appear the moment they start, named for what they are doing
-("Stepping the run · a7qfuxsp") with a running timer, and resolve to an outcome
-("1 step · 1 blocked"); the raw arguments and result are one click away. Prose
+again. Tool calls appear the moment the model commits to one — before its arguments
+have finished streaming — named for what they are doing ("Stepping the run ·
+a7qfuxsp") with a running timer, and resolve to an outcome ("1 step · 1
+blocked"); the raw arguments and result are one click away. Prose
 is markdown, and a new bubble begins after each tool call or thought so text
 either side of an interruption does not merge. While a reply is pending there is
 a "Processing" bubble with its own timer, and anything you type meanwhile is

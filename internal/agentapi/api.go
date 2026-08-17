@@ -364,8 +364,12 @@ func (a *API) StartRun(ctx context.Context, in StartRunInput) (StartRunOutput, e
 		if err != nil {
 			return StartRunOutput{}, fmt.Errorf("scenario is not valid: %w", err)
 		}
+		// A run of unsaved YAML is real, but the scenario behind it is not in
+		// the library. Flagging it keeps it out of the sidebar and out of any
+		// saved scenario's history.
+		parsed.Ephemeral = true
 		if parsed.ID == "" {
-			parsed.ID = "adhoc"
+			parsed.ID = "draft"
 		}
 		c = parsed
 	case in.ScenarioID != "":
@@ -452,6 +456,13 @@ func (a *API) StepRun(ctx context.Context, in StepRunInput) (StepRunOutput, erro
 
 	var out StepRunOutput
 	for i := 0; i < count; i++ {
+		// A person can stop a run the assistant is driving. Report it plainly
+		// so the model knows this was deliberate and does not simply retry.
+		if reason := run.TakeInterrupt(); reason != "" {
+			out.Stopped = reason + ". Do not resume unless the user asks; " +
+				"ask what they want changed instead."
+			break
+		}
 		res, err := run.Step(context.WithoutCancel(ctx))
 		if err != nil {
 			if errors.Is(err, engine.ErrNoMoreSteps) {
@@ -521,6 +532,30 @@ func (a *API) GetLocks(ctx context.Context, in GetLocksInput) (GetLocksOutput, e
 		return GetLocksOutput{}, fmt.Errorf("unknown run %q", in.RunID)
 	}
 	return GetLocksOutput{Locks: lockView(run.Snapshot())}, nil
+}
+
+// StopRunInput asks a run to stop advancing without tearing it down.
+type StopRunInput struct {
+	RunID  string `json:"run_id"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type StopRunOutput struct {
+	Stopped bool `json:"stopped"`
+}
+
+// StopRun halts a run that is being stepped, leaving it open for inspection.
+func (a *API) StopRun(ctx context.Context, in StopRunInput) (StopRunOutput, error) {
+	run, ok := a.mgr.Get(in.RunID)
+	if !ok {
+		return StopRunOutput{}, fmt.Errorf("unknown run %q", in.RunID)
+	}
+	run.Interrupt(in.Reason)
+	a.note(ctx, Activity{
+		Kind: KindRunStepped, Tool: "stop_run", RunID: in.RunID,
+		Summary: "stopped a run",
+	})
+	return StopRunOutput{Stopped: true}, nil
 }
 
 type CloseRunInput struct {

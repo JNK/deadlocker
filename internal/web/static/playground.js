@@ -72,10 +72,23 @@
       return;
     }
     // Editing writes back over the same file, so make that explicit once.
-    if (window.DL_EDITING && !window.confirm('Overwrite ' + path + ' with these changes?')) {
-      return;
-    }
-    post('/playground/save', { path: path, source: source.value })
+    var ask = window.DL_EDITING
+      ? window.DL.confirm({
+          title: 'Overwrite ' + path + '?',
+          body: 'The file on disk is replaced with what is in the editor.',
+          confirm: 'Save changes',
+          cancel: 'Cancel'
+        })
+      : Promise.resolve(true);
+
+    ask.then(function (ok) {
+      if (!ok) return;
+      return save(path);
+    });
+  });
+
+  function save(path) {
+    return post('/playground/save', { path: path, source: source.value })
       .then(function (res) {
         if (res.ok) {
           show('ok', (window.DL_EDITING ? 'Changes saved to ' : 'Saved to ') +
@@ -87,7 +100,7 @@
         }
       })
       .catch(function (err) { show('error', esc(String(err))); });
-  });
+  }
 
   // Syntax highlighting, indentation and completions. Tab handling lives in
   // the editor itself, alongside the completion menu that also wants the key.

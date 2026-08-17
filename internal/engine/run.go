@@ -145,6 +145,10 @@ type RunState struct {
 	DeadlockReport  string `json:"deadlock_report,omitempty"`
 	Isolation       string `json:"isolation,omitempty"`
 	LockWaitTimeout int    `json:"lock_wait_timeout,omitempty"`
+	// Interrupted is set while a stop is pending.
+	Interrupted string `json:"interrupted,omitempty"`
+	// Ephemeral marks a run of an unsaved draft.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // actorConn is one simulated client: its own proxy, its own dedicated MySQL
@@ -199,6 +203,11 @@ type Run struct {
 	// onState is called after every state change so the manager can refresh
 	// this run's history record. It must not call back into the run's lock.
 	onState func(*Run)
+
+	// interrupt is set when a human stops a run the assistant is driving. The
+	// agent's next step_run returns immediately and reports why, so the model
+	// learns it was stopped on purpose rather than seeing an unexplained halt.
+	interrupt string
 
 	// restoreDeadlockDetect records whether we changed the global so teardown
 	// can put it back for other runs sharing the container.
@@ -496,6 +505,37 @@ func (r *Run) logf(level, format string, args ...any) {
 	r.Bus.Publish(Event{Type: EventLog, RunID: r.ID, Level: level, Message: fmt.Sprintf(format, args...)})
 }
 
+// Interrupt asks the run to stop advancing. The reason is handed to whatever
+// is stepping it, which for the assistant means its tool call comes back
+// explaining that a person intervened.
+func (r *Run) Interrupt(reason string) {
+	if reason == "" {
+		reason = "stopped by the user"
+	}
+	r.mu.Lock()
+	r.interrupt = reason
+	r.mu.Unlock()
+	r.logf("warn", "%s", reason)
+	r.publishState()
+}
+
+// TakeInterrupt returns and clears any pending interrupt, so a later request to
+// continue is not refused by a stale flag.
+func (r *Run) TakeInterrupt() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	reason := r.interrupt
+	r.interrupt = ""
+	return reason
+}
+
+// Interrupted reports whether a stop is pending, without clearing it.
+func (r *Run) Interrupted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.interrupt != ""
+}
+
 // State returns a snapshot of the run state.
 func (r *Run) State() RunState {
 	r.mu.Lock()
@@ -520,6 +560,8 @@ func (r *Run) stateLocked() RunState {
 		DeadlockReport:  r.deadlock,
 		Isolation:       r.Case.NormalisedIsolation(),
 		LockWaitTimeout: r.Case.MySQL.LockWaitTimeout,
+		Interrupted:     r.interrupt,
+		Ephemeral:       r.Case.Ephemeral,
 	}
 	if r.box != nil {
 		s.Addr = r.box.Addr()

@@ -95,11 +95,18 @@
   document.querySelectorAll('.cfg-restore').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var version = Number(btn.dataset.version);
-      if (!window.confirm('Restore configuration version ' + version + '? ' +
-        'It is copied forward as a new version, so nothing is lost.')) return;
-      window.DL.postJSON('/api/settings/restore', { version: version }).then(function (res) {
-        if (!res.ok) { show('error', esc(res.error)); return; }
-        window.location.reload();
+      window.DL.confirm({
+        title: 'Restore version ' + version + '?',
+        body: 'It is copied forward as a new version, so nothing is lost and ' +
+          'you can go back again.',
+        confirm: 'Restore it',
+        cancel: 'Cancel'
+      }).then(function (ok) {
+        if (!ok) return;
+        window.DL.postJSON('/api/settings/restore', { version: version }).then(function (res) {
+          if (!res.ok) { show('error', esc(res.error)); return; }
+          window.location.reload();
+        });
       });
     });
   });

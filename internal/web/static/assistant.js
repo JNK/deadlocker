@@ -126,6 +126,7 @@
       el.runPlay = q('builder-run-play');
       el.runClose = q('builder-run-close');
       el.runOpen = q('builder-run-open');
+      el.stop = q('builder-stop');
       return true;
     }
 
@@ -142,6 +143,9 @@
       opts = opts || {};
       st.scenarioID = opts.scenarioID || '';
       st.pendingPrompt = opts.prompt || '';
+      // Opened by navigating to /builder, as opposed to from a button on a
+      // page that is still behind the sheet.
+      st.viaRoute = !!opts.viaRoute;
       st.session = null;
       st.open = true;
       detachRun();
@@ -154,6 +158,7 @@
       document.body.classList.add('sheet-open');
       setView('steps');
       renderSteps(el.steps, null, null);
+      paintRunControls();
 
       C.status().then(function (s) {
         el.model.textContent = s.model || 'no model selected';
@@ -170,7 +175,7 @@
           setDraftValue(res.draft);
           st.savedDraft = res.draft;
           st.scenario = res.scenario;
-          renderSteps(el.steps, res.scenario, null);
+          paintSteps();
           paint(false);
         }
       });
@@ -186,23 +191,54 @@
 
     function close(force) {
       if (!st.open) return;
-      if (!force && !confirmClose()) return;
+      if (force) { finishClose(); return; }
+
+      var ask = closeQuestion();
+      if (!ask) { finishClose(); return; }
+      window.DL.confirm(ask).then(function (ok) {
+        if (ok) finishClose();
+      });
+    }
+
+    // closeQuestion returns what to ask before closing, or null when there is
+    // nothing at stake.
+    function closeQuestion() {
+      if (el.composer && el.composer.isBusy()) {
+        return {
+          title: 'The assistant is still replying',
+          body: 'Closing now discards the reply in progress.',
+          confirm: 'Close anyway',
+          cancel: 'Keep waiting',
+          danger: true
+        };
+      }
+      if (isDraftDirty()) {
+        return {
+          title: 'This draft has not been saved',
+          body: 'It only exists in this conversation. Closing loses it.',
+          confirm: 'Discard the draft',
+          cancel: 'Keep editing',
+          danger: true
+        };
+      }
+      return null;
+    }
+
+    function finishClose() {
       if (st.turn) { st.turn.abort(); st.turn = null; }
       detachRun();
       el.sheet.hidden = true;
       el.backdrop.hidden = true;
       document.body.classList.remove('sheet-open');
       st.open = false;
-    }
 
-    function confirmClose() {
-      if (el.composer && el.composer.isBusy()) {
-        return window.confirm('The assistant is still replying. Close the builder anyway?');
+      // Arrived here by URL: closing should leave the URL too, so the address
+      // bar and the view agree. Fall back to the library when there is no
+      // history to return to (a fresh tab opened straight on /builder).
+      if (st.viaRoute) {
+        if (window.history.length > 1) window.history.back();
+        else window.location.href = '/';
       }
-      if (isDraftDirty()) {
-        return window.confirm('This draft has not been saved to the library. Close and lose it?');
-      }
-      return true;
     }
 
     function isDraftDirty() {
@@ -229,32 +265,76 @@
     // the run progresses, without navigating away from the builder.
     function attachRun(runID) {
       detachRun();
-      st.run = { id: runID, started: Date.now(), state: null };
+      var run = { id: runID, started: Date.now(), state: null, steps: {} };
+      st.run = run;
       el.runBar.hidden = false;
       el.runOpen.href = '/run/' + runID;
       setView('steps');
       updateRunBar();
 
-      st.runTimer = setInterval(updateRunBar, 250);
+      // Events from a superseded run must not write into the current one, so
+      // every handler checks it is still the active run before touching state.
+      function current() { return st.run === run; }
+
+      function applyState(state) {
+        if (!current() || !state) return;
+        run.state = state;
+        updateRunBar();
+      }
+
+      function applyStep(step) {
+        if (!current() || !step) return;
+        run.steps[step.index] = step;
+        paintSteps();
+      }
+
+      // Reconcile against the server rather than trusting that every event
+      // arrived. This is what makes the counter and the step list correct even
+      // if the stream hiccups or the page attached late.
+      function reconcile() {
+        if (!current()) return;
+        fetch('/run/' + runID + '/state')
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (res) {
+            if (!res || !res.ok || !current()) return;
+            run.state = res.state;
+            (res.steps || []).forEach(function (step) { run.steps[step.index] = step; });
+            updateRunBar();
+            paintSteps();
+          })
+          .catch(function () { /* the stream is the primary path */ });
+      }
+
+      reconcile();
+      st.runTimer = setInterval(function () {
+        updateRunBar();
+        // Cheap local endpoint; a slow tick is enough to self-heal.
+        if (run.tick === undefined) run.tick = 0;
+        if (++run.tick % 4 === 0) reconcile();
+      }, 250);
 
       var source = new EventSource('/run/' + runID + '/events');
       st.runSource = source;
 
       source.addEventListener('state', function (e) {
         var ev = safeParse(e.data);
-        if (ev && ev.state) {
-          st.run.state = ev.state;
-          updateRunBar();
-        }
+        if (ev) applyState(ev.state);
       });
       source.addEventListener('step', function (e) {
         var ev = safeParse(e.data);
-        if (!ev || !ev.step) return;
-        if (!st.run.steps) st.run.steps = {};
-        st.run.steps[ev.step.index] = ev.step;
-        renderSteps(el.steps, st.scenario, { steps: Object.values(st.run.steps) });
+        if (ev) applyStep(ev.step);
       });
-      source.addEventListener('closed', detachRun);
+      source.addEventListener('closed', function () {
+        if (current()) detachRun();
+      });
+    }
+
+    // paintSteps redraws the step list with whatever live statuses are known.
+    function paintSteps() {
+      var live = st.run ? { steps: Object.keys(st.run.steps).map(function (k) {
+        return st.run.steps[k];
+      }) } : null;
+      renderSteps(el.steps, st.scenario, live);
     }
 
     function detachRun() {
@@ -262,6 +342,22 @@
       if (st.runTimer) { clearInterval(st.runTimer); st.runTimer = 0; }
       if (el.runBar) el.runBar.hidden = true;
       st.run = null;
+    }
+
+    // paintRunControls decides which of Test run / Stop is offered. The
+    // assistant and the user must not step the same run at once.
+    function paintRunControls() {
+      var assistantBusy = !!(el.composer && el.composer.isBusy());
+      var hasRun = !!st.run;
+
+      el.stop.hidden = !(assistantBusy && hasRun);
+      el.run.hidden = assistantBusy && hasRun;
+      el.run.disabled = assistantBusy;
+      el.run.textContent = hasRun ? 'Run again' : 'Test run';
+
+      // Manual stepping is only safe when nothing else is driving the run.
+      if (el.runStep) el.runStep.disabled = assistantBusy;
+      if (el.runPlay) el.runPlay.disabled = assistantBusy;
     }
 
     function updateRunBar() {
@@ -276,6 +372,7 @@
         if (st.runTimer) { clearInterval(st.runTimer); st.runTimer = 0; }
       }
       el.runClock.textContent = C.fmtDuration(Date.now() - st.run.started);
+      paintRunControls();
     }
 
     function safeParse(s) {
@@ -290,8 +387,7 @@
         .then(function (res) {
           if (!res.ok) { el.log.note('error', 'Draft rejected: ' + res.error); return false; }
           st.scenario = res.scenario;
-          renderSteps(el.steps, res.scenario, st.run && st.run.steps
-            ? { steps: Object.values(st.run.steps) } : null);
+          paintSteps();
           paint(false);
           return true;
         });
@@ -312,17 +408,38 @@
       });
     }
 
-    // The test run stays in the sheet: it drives the step list beside the
-    // conversation instead of opening a tab and losing the context.
+    // Test run does the whole thing in one press: start the run and play it to
+    // the end, in the sheet, without saying anything to the assistant. It is
+    // refused while the assistant is driving a run of its own.
     function testRun() {
+      if (el.composer && el.composer.isBusy() && st.run) return;
+
       applyDraft().then(function (ok) {
         if (!ok) return;
-        el.log.note('info', 'Starting a test run of the draft…');
         return window.DL.postJSON('/run', { source: el.draft.value }).then(function (r) {
           if (!r.ok) { el.log.note('error', r.error); return; }
           attachRun(r.run_id);
-          el.log.note('ok', 'Run ' + r.run_id + ' is ready — step it from the panel on the right.');
+          paintRunControls();
+          // Play to the end. It stops by itself if an actor blocks, which the
+          // run bar then shows.
+          return window.DL.postJSON('/run/' + r.run_id + '/play').then(function (res) {
+            if (res && res.stopped) el.log.note('warn', res.stopped);
+          });
         });
+      });
+    }
+
+    // Stop interrupts a run the assistant is stepping. The interruption reaches
+    // the model through its own tool result, so it learns a person stepped in.
+    function stopRun() {
+      if (!st.run) return;
+      window.DL.postJSON('/run/' + st.run.id + '/stop').then(function (res) {
+        if (res && res.ok) {
+          el.log.note('warn', 'You stopped the run. The assistant will be told on its next step.');
+        } else if (res) {
+          el.log.note('error', res.error || 'could not stop the run');
+        }
+        paintRunControls();
       });
     }
 
@@ -344,8 +461,7 @@
               setDraftValue(data.yaml || '');
               st.savedDraft = st.savedDraft || '';
               st.scenario = data.scenario;
-              renderSteps(el.steps, data.scenario, st.run && st.run.steps
-                ? { steps: Object.values(st.run.steps) } : null);
+              paintSteps();
               paint(isDraftDirty());
             },
             run: function (data) { attachRun(data.run_id); },
@@ -356,12 +472,16 @@
               window.dispatchEvent(new CustomEvent('dl-scenario-saved'));
             }
           });
+          paintRunControls();
           return st.turn.promise
             .catch(function (err) {
               if (err && err.name === 'AbortError') return;
               el.log.note('error', String(err && err.message ? err.message : err));
             })
-            .finally(function () { st.turn = null; });
+            .finally(function () {
+              st.turn = null;
+              paintRunControls();
+            });
         }
       });
 
@@ -369,6 +489,7 @@
       el.draftApply.addEventListener('click', applyDraft);
       el.save.addEventListener('click', saveDraft);
       el.run.addEventListener('click', testRun);
+      el.stop.addEventListener('click', stopRun);
       // Syntax highlighting and completions, the same editor the playground
       // uses. attachEditor owns the textarea's key handling from here.
       if (window.DL.attachEditor) {
@@ -394,6 +515,7 @@
         // The YAML completion menu gets Escape first: dismissing it is what the
         // user means there, not closing the whole builder.
         if (el.sheet.querySelector('.ac-menu:not([hidden])')) return;
+        if (window.DL.dialogOpen && window.DL.dialogOpen()) return;
         e.preventDefault();
         e.stopPropagation();
         el.status.textContent = 'Escape is disabled here — use ✕ to close';
@@ -419,7 +541,11 @@
 
       // /builder opens the sheet on load. The library renders underneath, so
       // closing it leaves the user on the scenario list.
-      if (window.DL_OPEN_BUILDER) open(window.DL_OPEN_BUILDER);
+      if (window.DL_OPEN_BUILDER) {
+        var opts = window.DL_OPEN_BUILDER;
+        opts.viaRoute = true;
+        open(opts);
+      }
     }
 
     return { init: init, open: open };

@@ -1508,6 +1508,11 @@ body.sheet-open { overflow: hidden; }
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 12px), transparent 100%);
   mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 12px), transparent 100%);
 }
+
+/* Flex children shrink by default, so a long conversation squeezed every
+   message into a sliver instead of scrolling. Each block keeps the height its
+   content needs and the log scrolls. */
+.chat-log > * { flex-shrink: 0; }
 .chat-empty { margin: auto 0; padding: 16px 2px; color: var(--text-2); }
 .chat-empty h3 { margin: 0 0 6px; font-size: 15px; color: var(--text); }
 .chat-empty p { margin: 0 0 12px; font-size: 13px; }
@@ -2067,21 +2072,30 @@ body.sheet-open { overflow: hidden; }
 .steps-item {
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  transition: border-color .16s, box-shadow .16s;
+  transition: border-color .16s, background .16s, box-shadow .16s;
 }
-.steps-item.accent-blue { border-left-color: var(--a-blue); }
-.steps-item.accent-amber { border-left-color: var(--a-amber); }
-.steps-item.accent-violet { border-left-color: var(--a-violet); }
-.steps-item.accent-teal { border-left-color: var(--a-teal); }
-.steps-item.accent-rose { border-left-color: var(--a-rose); }
-.steps-item.status-pending { opacity: .74; }
-.steps-item.status-running { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.steps-item.status-blocked { border-color: var(--warn); background: var(--warn-soft); }
-.steps-item.status-error { border-color: var(--danger); background: var(--danger-soft); }
-.steps-item.status-done { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+/* An executed step is tinted by its outcome; a pending one stays plain, so the
+   colour in the list is a record of what actually happened. */
+.steps-item.status-pending { opacity: .72; }
+.steps-item.status-running {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.steps-item.status-done {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
+  background: color-mix(in srgb, var(--ok) 7%, var(--surface));
+}
+.steps-item.status-blocked {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+}
+.steps-item.status-error {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
 
 .steps-item-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 5px; }
 .steps-num {
@@ -2256,3 +2270,81 @@ body.sheet-open { overflow: hidden; }
 }
 .nav-item.is-active .nav-item-name { color: var(--accent); font-weight: 600; }
 .nav-item.is-active:hover { background: var(--accent-soft); }
+
+
+/* ------------------------------------------------------------ tag tones */
+
+/* A tag's colour is derived from its name, so the same tag reads the same
+   everywhere without anyone maintaining a mapping. */
+.tag { border: 1px solid transparent; }
+.tag.tone-1 { background: color-mix(in srgb, var(--a-blue) 14%, transparent);   color: var(--a-blue); }
+.tag.tone-2 { background: color-mix(in srgb, var(--a-violet) 14%, transparent); color: var(--a-violet); }
+.tag.tone-3 { background: color-mix(in srgb, var(--a-teal) 15%, transparent);   color: var(--a-teal); }
+.tag.tone-4 { background: color-mix(in srgb, var(--a-amber) 16%, transparent);  color: var(--a-amber); }
+.tag.tone-5 { background: color-mix(in srgb, var(--a-rose) 14%, transparent);   color: var(--a-rose); }
+.tag.tone-6 { background: color-mix(in srgb, var(--ok) 14%, transparent);       color: var(--ok); }
+.tag.tone-7 { background: color-mix(in srgb, var(--danger) 13%, transparent);   color: var(--danger); }
+.tag.tone-8 { background: color-mix(in srgb, var(--text-3) 18%, transparent);   color: var(--text-2); }
+
+/* A tool block whose arguments are still streaming. */
+.chat-tool.is-pending .tool-detail { font-style: italic; opacity: .75; }
+
+/* The stop control replaces run controls while the assistant drives a run. */
+.btn-stop {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-stop:hover { background: var(--danger); color: #fff; }
+
+/* ========================================================== confirm dialog */
+
+.dl-dialog {
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 30px 70px -20px rgba(8, 11, 16, .55);
+  max-width: min(430px, calc(100vw - 40px));
+  animation: sheet-in .16s cubic-bezier(.2, .8, .3, 1);
+}
+.dl-dialog::backdrop {
+  background: rgba(12, 15, 20, .5);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.dl-dialog-form { padding: 20px 22px 16px; margin: 0; }
+.dl-dialog-title { margin: 0 0 7px; font-size: 15.5px; letter-spacing: -.01em; }
+.dl-dialog-body { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-2); }
+.dl-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-danger:hover { background: color-mix(in srgb, var(--danger) 85%, #000); border-color: transparent; }
+
+/* ======================================================= background wash */
+
+/* A soft accent bloom behind the panels. Fixed and non-interactive, so it
+   never moves with scroll or intercepts a click -- just enough colour that the
+   canvas is not flat grey. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(52% 40% at 14% 4%,  color-mix(in srgb, var(--a-blue) 20%, transparent), transparent 70%),
+    radial-gradient(44% 36% at 92% 12%, color-mix(in srgb, var(--a-violet) 15%, transparent), transparent 72%),
+    radial-gradient(60% 44% at 68% 98%, color-mix(in srgb, var(--a-teal) 12%, transparent), transparent 75%);
+  filter: blur(52px) saturate(120%);
+  opacity: .5;
+}
+:root[data-theme="dark"] body::before { opacity: .34; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) body::before { opacity: .34; }
+}

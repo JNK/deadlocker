@@ -177,7 +177,18 @@
 
   // ----------------------------------------------------------------- tools
 
+  // toolCall creates the block, or fills in one already opened by toolInput.
   Log.prototype.toolCall = function (ev) {
+    var existing = this.tools[ev.id || ev.tool];
+    if (existing) {
+      var head = existing.el;
+      head.querySelector('.tool-label').textContent = ev.label || ev.tool;
+      head.querySelector('.tool-detail').textContent = ev.detail || '';
+      head.querySelector('.tool-payload .tool-section pre').textContent = prettyJSON(ev.input);
+      head.classList.remove('is-pending');
+      return existing.el;
+    }
+
     this.breakText();
     var div = document.createElement('div');
     div.className = 'chat-tool is-running';
@@ -213,6 +224,48 @@
     }, 250);
 
     this.tools[ev.id || ev.tool] = block;
+    return this.add(div);
+  };
+
+  // toolInput opens the block the moment the model commits to a tool, before
+  // its arguments have finished streaming. For a tool carrying a large payload
+  // -- a whole scenario draft -- that is the difference between instant
+  // feedback and a several-second stall.
+  Log.prototype.toolInput = function (ev) {
+    var key = ev.id || ev.tool;
+    if (this.tools[key]) return this.tools[key].el;
+
+    this.breakText();
+    var div = document.createElement('div');
+    div.className = 'chat-tool is-running is-pending';
+    div.innerHTML =
+      '<div class="tool-head">' +
+      '<span class="tool-spinner"></span>' +
+      '<span class="tool-label"></span>' +
+      '<span class="tool-detail"></span>' +
+      '<span class="tool-time"></span>' +
+      '<button class="tool-toggle" type="button" title="Show the arguments and result">⋯</button>' +
+      '</div>' +
+      '<div class="tool-payload" hidden>' +
+      '<div class="tool-section"><span class="tool-section-title">arguments</span><pre></pre></div>' +
+      '<div class="tool-section tool-result-section" hidden><span class="tool-section-title">result</span><pre></pre></div>' +
+      '</div>';
+    div.querySelector('.tool-label').textContent = ev.label || ev.tool;
+    div.querySelector('.tool-detail').textContent = 'preparing…';
+
+    var payload = div.querySelector('.tool-payload');
+    div.querySelector('.tool-toggle').addEventListener('click', function () {
+      payload.hidden = !payload.hidden;
+      div.classList.toggle('is-expanded', !payload.hidden);
+    });
+
+    var block = { el: div, started: Date.now(), timer: 0 };
+    var timeEl = div.querySelector('.tool-time');
+    block.timer = setInterval(function () {
+      timeEl.textContent = fmtDuration(Date.now() - block.started);
+    }, 250);
+
+    this.tools[key] = block;
     return this.add(div);
   };
 
@@ -360,6 +413,10 @@
             break;
           case 'reasoning_end':
             log.reasoningEnd(data.id);
+            break;
+          case 'tool_input':
+            firstSignal();
+            log.toolInput(data);
             break;
           case 'tool_call':
             firstSignal();

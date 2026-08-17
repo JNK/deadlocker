@@ -653,8 +653,17 @@
     });
   });
   document.getElementById('btn-close-run').addEventListener('click', function () {
-    if (!confirm('Close this run? Connections are dropped and the scratch database is deleted.')) return;
-    postJSON('/run/' + runID + '/close').then(function () { window.location.href = '/'; });
+    window.DL.confirm({
+      title: 'Close this run?',
+      body: 'Its connections are dropped and the scratch database is deleted. ' +
+        'The run stays in the history.',
+      confirm: 'Close the run',
+      cancel: 'Keep it open',
+      danger: true
+    }).then(function (ok) {
+      if (!ok) return;
+      postJSON('/run/' + runID + '/close').then(function () { window.location.href = '/'; });
+    });
   });
 
   var moreBtn = document.getElementById('btn-more');

@@ -67,6 +67,7 @@ const (
 	EvReasoningStart = "reasoning_start"
 	EvReasoningDelta = "reasoning_delta"
 	EvReasoningEnd   = "reasoning_end"
+	EvToolInput      = "tool_input"
 	EvToolCall       = "tool_call"
 	EvToolResult     = "tool_result"
 	EvDraft          = "draft"
@@ -237,6 +238,15 @@ func (s *Service) Send(ctx context.Context, sess *Session, message string, emit 
 		},
 		OnReasoningEnd: func(id string, _ fantasy.ReasoningContent) error {
 			emit(Event{Type: EvReasoningEnd, ID: id})
+			return nil
+		},
+
+		// The tool name arrives before its arguments finish streaming, so the
+		// UI can show what is about to happen instead of waiting for a large
+		// argument blob (a 60-line YAML draft, say) to finish.
+		OnToolInputStart: func(id, toolName string) error {
+			label, _ := describeToolCall(toolName, "")
+			emit(Event{Type: EvToolInput, ID: id, Tool: toolName, Label: label})
 			return nil
 		},
 

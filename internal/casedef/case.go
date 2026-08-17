@@ -95,6 +95,10 @@ type Case struct {
 	// Source is the raw YAML, kept so the playground editor round-trips
 	// comments and formatting instead of re-marshalling.
 	Source string `yaml:"-" json:"source,omitempty"`
+	// Ephemeral marks a scenario that exists only for this session -- a draft
+	// being built, run before it has been saved. Runs of it are real, but it
+	// has no place in the library or the sidebar.
+	Ephemeral bool `yaml:"-" json:"ephemeral,omitempty"`
 }
 
 // Parse decodes and validates a case from YAML.

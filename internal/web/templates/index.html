@@ -31,7 +31,7 @@
           </div>
           {{if .Tags}}
           <div class="tag-row">
-            {{range .Tags}}<span class="tag">{{.}}</span>{{end}}
+            {{range .Tags}}<span class="tag tone-{{tagTone .}}">{{.}}</span>{{end}}
           </div>
           {{end}}
         </a>
@@ -52,6 +52,7 @@
 
 
 <script src="/static/app.js"></script>
+<script src="/static/dialog.js"></script>
 <script src="/static/activity.js"></script>
 <script src="/static/yaml.js"></script>
 {{template "assistant-mount" .}}
