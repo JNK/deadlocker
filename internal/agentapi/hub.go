@@ -14,6 +14,7 @@ const (
 	KindRunStepped      = "run.stepped"
 	KindRunClosed       = "run.closed"
 	KindConfigSaved     = "config.saved"
+	KindAnalysis        = "analysis.finished"
 	KindToolCalled      = "tool.called"
 )
 

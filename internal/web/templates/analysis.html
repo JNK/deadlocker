@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main">
+    <header class="page-header page-header-sticky">
+      <div class="page-header-main">
+        <div class="crumb">
+          <a href="/">Scenarios</a> <span>/</span>
+          {{if .Job.ScenarioID}}<a href="/case/{{.Job.ScenarioID}}">{{.Job.Name}}</a>{{else}}{{.Job.Name}}{{end}}
+        </div>
+        <h1>{{if eq .Job.Kind "isolation-matrix"}}Isolation matrix{{else}}Minimal reproduction{{end}}</h1>
+        <div class="badge-row">
+          <span class="chip chip-status" data-run-status="{{.Job.Status}}">{{.Job.Status}}</span>
+          <span class="chip mono">{{.Job.ID}}</span>
+          <span class="chip">{{dateTime .Job.Started}}</span>
+        </div>
+      </div>
+      <div class="page-actions">
+        {{if .Job.ScenarioID}}
+        <a class="btn btn-ghost" href="/case/{{.Job.ScenarioID}}#case=analyse">Back to the scenario</a>
+        {{end}}
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>{{if eq .Job.Kind "isolation-matrix"}}Outcome per isolation level{{else}}What the reduction found{{end}}</h2>
+      </div>
+      <div class="panel-body">
+        <div id="analysis-out" data-job="{{.Job.ID}}" data-kind="{{.Job.Kind}}"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script src="/static/dialog.js"></script>
+<script src="/static/activity.js"></script>
+<script src="/static/sidebar.js"></script>
+<script src="/static/yaml.js"></script>
+<script src="/static/runpane.js"></script>
+<script src="/static/analyse.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

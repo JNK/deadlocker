@@ -340,6 +340,14 @@ against a real server — every candidate is actually executed. On the AB-BA
 deadlock it goes from 8 steps to 6 in 14 attempts, correctly identifying both
 cleanup steps as unnecessary.
 
+The result shows the *original* sequence with the dropped steps struck through
+rather than only the survivors: seeing what turned out to be incidental is the
+point. From there the reduction can be copied, saved as a new scenario beside
+the original, or written over it.
+
+Both analyses appear in the sidebar while they run, with live progress, and
+each has a permanent URL at `/analysis/{id}`.
+
 ## Query plans
 
 Every locking statement carries its `EXPLAIN` output, read on a connection that

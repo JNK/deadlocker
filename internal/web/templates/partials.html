@@ -70,6 +70,23 @@
     {{end}}
   </nav>
 
+  <!-- Analyses are batches of runs with a conclusion, so they get their own
+       short list rather than being mixed into the run log. -->
+  <div class="sidebar-analyses" id="sidebar-analyses" {{if not .Analyses}}hidden{{end}}>
+    <div class="sidebar-runs-head"><span class="nav-group-title">Analyses</span></div>
+    <nav id="sidebar-analyses-list">
+      {{range .Analyses}}
+      <a class="job-chip status-{{.Status}}" data-job-id="{{.ID}}" href="/analysis/{{.ID}}">
+        <span class="job-kind">{{if eq .Kind "isolation-matrix"}}matrix{{else}}shrink{{end}}</span>
+        <span class="job-body">
+          <span class="job-name">{{.Name}}</span>
+          <span class="job-meta">{{if eq .Status "running"}}{{.Progress}}{{else}}{{.Status}}{{end}}</span>
+        </span>
+      </a>
+      {{end}}
+    </nav>
+  </div>
+
   {{if .Broken}}
   <div class="sidebar-broken">
     <div class="nav-group-title">Will not parse</div>

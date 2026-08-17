@@ -2641,3 +2641,121 @@ body::before {
 .mini-countdown.is-urgent { background: var(--danger-soft); color: var(--danger); }
 .mini-countdown.is-expired { background: var(--danger); color: #fff; }
 .steps-blocked .mini-countdown { margin-left: 6px; }
+
+/* ================================================== sidebar: analyses list */
+
+.sidebar-analyses { border-top: 1px solid var(--border); padding-top: 8px; }
+#sidebar-analyses-list { display: flex; flex-direction: column; gap: 2px; max-height: 22vh; overflow-y: auto; }
+.job-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+}
+.job-chip:hover { background: var(--surface-3); }
+.job-kind {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--violet-soft);
+  color: var(--violet);
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  flex: none;
+}
+.job-body { flex: 1; min-width: 0; }
+.job-name {
+  display: block;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-meta {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-chip.status-running { background: var(--accent-soft); border-color: var(--accent-border); }
+.job-chip.status-running .job-meta { color: var(--accent); }
+.job-chip.status-failed .job-meta { color: var(--danger); }
+
+/* ========================================== minimal reproduction step view */
+
+.shrink-legend { display: flex; gap: 18px; margin: 0 0 12px; font-size: 12px; color: var(--text-3); }
+.shrink-dot {
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.shrink-dot.is-kept { background: var(--ok); }
+.shrink-dot.is-dropped { background: var(--text-3); opacity: .5; }
+
+.shrink-steps { margin: 0 0 16px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.shrink-step {
+  display: flex;
+  gap: 11px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.shrink-step.is-kept { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+/* A dropped step is shown, not hidden: seeing what was incidental is the
+   point of the reduction. */
+.shrink-step.is-dropped { opacity: .55; background: var(--surface-2); }
+.shrink-step.is-dropped .shrink-label,
+.shrink-step.is-dropped .shrink-sql { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.shrink-num {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  flex: none;
+}
+.shrink-body { flex: 1; min-width: 0; }
+.shrink-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 5px; }
+.shrink-label { font-size: 13px; font-weight: 600; }
+.shrink-verdict {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+.shrink-step.is-kept .shrink-verdict { background: var(--ok-soft); color: var(--ok); }
+.shrink-sql {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.shrink-step.is-dropped .shrink-sql { background: transparent; }
+
+.shrink-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.shrink-status { margin-bottom: 12px; }
+.shrink-yaml > summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); margin-bottom: 8px; }
+.analysis-permalink { margin-top: 14px; font-size: 11.5px; }

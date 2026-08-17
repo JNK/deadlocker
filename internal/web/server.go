@@ -177,6 +177,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /compare", s.handleCompare)
 	mux.HandleFunc("GET /api/history", s.handleHistoryAPI)
 	mux.HandleFunc("GET /api/runs", s.handleRunsAPI)
+	mux.HandleFunc("GET /api/jobs", s.handleJobsAPI)
+	mux.HandleFunc("GET /analysis/{id}", s.handleAnalysisPage)
+	mux.HandleFunc("POST /api/analysis/{id}/apply", s.handleApplyShrink)
 	mux.HandleFunc("POST /api/analyse/{kind}", s.handleAnalyse)
 	mux.HandleFunc("GET /api/job/{id}", s.handleJob)
 	mux.HandleFunc("GET /playground", s.handlePlayground)
@@ -228,16 +231,13 @@ func (s *Server) Routes() http.Handler {
 
 // handleEdit opens the editor on an existing scenario, saving in place.
 func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	c, ok := s.lib.Get(id)
+	pd := s.base("", "library")
+	c, ok := s.lib.Get(r.PathValue("id"))
 	if !ok {
-		_ = s.lib.Load()
-		if c, ok = s.lib.Get(id); !ok {
-			http.NotFound(w, r)
-			return
-		}
+		http.NotFound(w, r)
+		return
 	}
-	pd := s.base("Edit "+c.Name, "library")
+	pd.Title = "Edit " + c.Name
 	pd.Case = c
 	pd.ActiveCase = c.ID
 	pd.Source = c.Source
@@ -280,6 +280,8 @@ type pageData struct {
 	CaseSteps     []casedef.Step
 	Settle        int64
 
+	Analyses   []*agentapi.Job
+	Job        *agentapi.Job
 	History    []*engine.Record
 	AllHistory []*engine.Record
 	Diff       *engine.DiffResult
@@ -376,6 +378,15 @@ func (s *Server) base(title, nav string) *pageData {
 			break
 		}
 	}
+
+	// Analyses are listed beside the runs: each is a batch of runs with a
+	// conclusion, which is worth keeping visible while it works.
+	for i, job := range s.api.Jobs().All() {
+		if i >= 12 {
+			break
+		}
+		pd.Analyses = append(pd.Analyses, job)
+	}
 	return pd
 }
 
@@ -411,16 +422,17 @@ func (s *Server) handleBuilder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCase(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	c, ok := s.lib.Get(id)
+	// base() rescans the library, so the lookup has to come after it. Reading
+	// the case first served a stale copy whenever the file had changed since
+	// the last load -- which is every time a scenario is edited or replaced.
+	pd := s.base("", "library")
+
+	c, ok := s.lib.Get(r.PathValue("id"))
 	if !ok {
-		_ = s.lib.Load()
-		if c, ok = s.lib.Get(id); !ok {
-			http.NotFound(w, r)
-			return
-		}
+		http.NotFound(w, r)
+		return
 	}
-	pd := s.base(c.Name, "library")
+	pd.Title = c.Name
 	pd.Case = c
 	pd.ActiveCase = c.ID
 	pd.Source = c.Source
@@ -879,4 +891,43 @@ func (s *Server) renderArchivedRun(w http.ResponseWriter, rec *engine.Record) {
 		pd.CaseSteps = c.Steps
 	}
 	s.render(w, "run.html", pd)
+}
+
+// handleJobsAPI serves the analysis list for the sidebar.
+func (s *Server) handleJobsAPI(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": s.api.Jobs().All()})
+}
+
+// handleAnalysisPage renders one analysis result on its own URL, so a finding
+// can be linked to rather than only existing inside a tab.
+func (s *Server) handleAnalysisPage(w http.ResponseWriter, r *http.Request) {
+	out, err := s.api.GetJob(r.Context(), agentapi.GetJobInput{JobID: r.PathValue("id")})
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	pd := s.base(out.Job.Name, "analysis")
+	pd.Job = out.Job
+	pd.ActiveCase = out.Job.ScenarioID
+	s.render(w, "analysis.html", pd)
+}
+
+// handleApplyShrink writes a minimal reproduction into the library, either over
+// the scenario it came from or as a new one beside it.
+func (s *Server) handleApplyShrink(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+		Path string `json:"path"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req)
+
+	out, err := s.api.ApplyShrink(agentapi.WithSource(r.Context(), agentapi.SourceUI),
+		agentapi.ApplyShrinkInput{JobID: r.PathValue("id"), Mode: req.Mode, Path: req.Path})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "id": out.ID, "path": out.Path, "warnings": out.Warnings,
+	})
 }

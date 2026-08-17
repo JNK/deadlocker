@@ -16,11 +16,19 @@ holders=$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true)
 if [ -n "$holders" ]; then
   echo "killing pid(s) on :$PORT -> $holders"
   kill $holders 2>/dev/null || true
-  for _ in $(seq 1 20); do
-    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t >/dev/null 2>&1 || break
+  # Wait for the process to actually exit, not just to release the port.
+  # Shutdown removes containers first, and it holds the bbolt file lock the
+  # whole time -- starting again too early fails with "state.db: timeout".
+  for _ in $(seq 1 60); do
+    still=""
+    for pid in $holders; do
+      kill -0 "$pid" 2>/dev/null && still="$still $pid"
+    done
+    [ -z "$still" ] && break
     sleep 0.5
   done
-  kill -9 $(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true) 2>/dev/null || true
+  for pid in $holders; do kill -9 "$pid" 2>/dev/null || true; done
+  sleep 0.3
 fi
 
 GOTOOLCHAIN=auto go build -o "$BIN" ./cmd/deadlocker

@@ -102,10 +102,76 @@
     }, 250);
   }
 
+  // ------------------------------------------------------------ analyses
+
+  var jobsHost = document.getElementById('sidebar-analyses-list');
+  var jobsWrap = document.getElementById('sidebar-analyses');
+  var jobsPending = 0;
+
+  function jobHTML(j) {
+    var meta = j.status === 'running' ? (j.progress || 'running…') : j.status;
+    return '<span class="job-kind">' + esc(j.kind === 'isolation-matrix' ? 'matrix' : 'shrink') + '</span>' +
+      '<span class="job-body">' +
+      '<span class="job-name">' + esc(j.name || j.scenario_id) + '</span>' +
+      '<span class="job-meta">' + esc(meta) + '</span>' +
+      '</span>';
+  }
+
+  function reconcileJobs(jobs) {
+    if (!jobsHost) return;
+    jobsWrap.hidden = !jobs.length;
+
+    var existing = {};
+    jobsHost.querySelectorAll('[data-job-id]').forEach(function (el) {
+      existing[el.dataset.jobId] = el;
+    });
+
+    var ordered = jobs.map(function (j) {
+      var el = existing[j.id];
+      if (el) {
+        delete existing[j.id];
+        var cls = 'job-chip status-' + j.status;
+        if (el.className !== cls) el.className = cls;
+        var next = jobHTML(j);
+        if (el.dataset.sig !== next) { el.innerHTML = next; el.dataset.sig = next; }
+        return el;
+      }
+      el = document.createElement('a');
+      el.className = 'job-chip status-' + j.status;
+      el.dataset.jobId = j.id;
+      el.href = '/analysis/' + j.id;
+      el.innerHTML = jobHTML(j);
+      el.dataset.sig = el.innerHTML;
+      return el;
+    });
+
+    Object.keys(existing).forEach(function (id) { existing[id].remove(); });
+    ordered.forEach(function (el) { jobsHost.appendChild(el); });
+  }
+
+  function refreshJobs() {
+    clearTimeout(jobsPending);
+    jobsPending = setTimeout(function () {
+      fetch('/api/jobs')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (res) { if (res && res.ok) reconcileJobs(res.jobs || []); })
+        .catch(function () {});
+    }, 250);
+  }
+
   window.addEventListener('dl-activity', function (e) {
     var kind = e.detail && e.detail.kind;
-    if (kind && kind.indexOf('run.') === 0) refresh();
+    if (!kind) return;
+    if (kind.indexOf('run.') === 0) refresh();
+    if (kind.indexOf('analysis.') === 0) refreshJobs();
   });
+
+  // An analysis reports progress without emitting an event per attempt, so it
+  // is polled while one is running.
+  setInterval(function () {
+    if (jobsHost && jobsHost.querySelector('.job-chip.status-running')) refreshJobs();
+  }, 2000);
+  refreshJobs();
 
   // A live run's step counter advances without an activity event of its own on
   // every tick, so a slow poll keeps the counts honest while anything is live.

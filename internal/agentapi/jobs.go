@@ -59,6 +59,23 @@ func (j *Jobs) put(job *Job) {
 	j.jobs[job.ID] = job
 }
 
+// All returns every job, newest first.
+func (j *Jobs) All() []*Job {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	out := make([]*Job, 0, len(j.order))
+	for i := len(j.order) - 1; i >= 0; i-- {
+		if job, ok := j.jobs[j.order[i]]; ok {
+			copied := *job
+			out = append(out, &copied)
+		}
+	}
+	return out
+}
+
+// Jobs exposes the registry for listings.
+func (a *API) Jobs() *Jobs { return a.jobs }
+
 func (j *Jobs) Get(id string) (*Job, bool) {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
@@ -285,7 +302,7 @@ func (a *API) runMatrix(job *Job, base *casedef.Case) {
 		j.Matrix = res
 	})
 	a.note(ctx, Activity{
-		Kind: KindRunStepped, Tool: "isolation_matrix", ScenarioID: base.ID,
+		Kind: KindAnalysis, Tool: "isolation_matrix", ScenarioID: base.ID,
 		Summary: "isolation matrix finished: " + res.Summary,
 	})
 }
@@ -320,6 +337,19 @@ func summariseMatrix(res *MatrixResult) string {
 
 // ------------------------------------------------------------- shrink
 
+// ShrinkStep is one step of the original scenario, marked with whether the
+// reduction kept it. Rendering the original with the drops marked says more
+// than showing only the survivors.
+type ShrinkStep struct {
+	Index  int    `json:"index"`
+	Actor  string `json:"actor"`
+	Accent string `json:"accent"`
+	Label  string `json:"label"`
+	SQL    string `json:"sql"`
+	Expect string `json:"expect,omitempty"`
+	Kept   bool   `json:"kept"`
+}
+
 type ShrinkResult struct {
 	ScenarioID string `json:"scenario_id"`
 	Name       string `json:"name"`
@@ -327,10 +357,11 @@ type ShrinkResult struct {
 	Original   int    `json:"original_steps"`
 	Minimal    int    `json:"minimal_steps"`
 	// RemovedLabels names what turned out to be unnecessary.
-	RemovedLabels []string `json:"removed_labels,omitempty"`
-	YAML          string   `json:"yaml,omitempty"`
-	Attempts      int      `json:"attempts"`
-	Note          string   `json:"note,omitempty"`
+	RemovedLabels []string     `json:"removed_labels,omitempty"`
+	Steps         []ShrinkStep `json:"steps,omitempty"`
+	YAML          string       `json:"yaml,omitempty"`
+	Attempts      int          `json:"attempts"`
+	Note          string       `json:"note,omitempty"`
 }
 
 type ShrinkInput struct {
@@ -431,6 +462,12 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 	res.Target = target
 
 	current := cloneCase(base)
+	// kept maps each surviving step back to its position in the original, so
+	// the result can mark the drops against the scenario the user knows.
+	kept := make([]int, len(base.Steps))
+	for i := range kept {
+		kept[i] = i
+	}
 	attempts := 0
 	const maxAttempts = 80
 
@@ -442,6 +479,7 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 		for i := len(current.Steps) - 1; i >= 0 && attempts < maxAttempts; i-- {
 			candidate := cloneCase(current)
 			candidate.Steps = append(append([]casedef.Step{}, current.Steps[:i]...), current.Steps[i+1:]...)
+			candidateKept := append(append([]int{}, kept[:i]...), kept[i+1:]...)
 			if len(candidate.Steps) == 0 {
 				continue
 			}
@@ -461,6 +499,7 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 			if ok {
 				res.RemovedLabels = append(res.RemovedLabels, current.Steps[i].Label)
 				current = candidate
+				kept = candidateKept
 				changed = true
 			}
 		}
@@ -468,7 +507,30 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 
 	res.Minimal = len(current.Steps)
 	res.Attempts = attempts
-	if yamlBytes, err := casedef.Marshal(current); err == nil {
+
+	// Render the original sequence with the drops marked.
+	keptSet := map[int]bool{}
+	for _, idx := range kept {
+		keptSet[idx] = true
+	}
+	accents := map[string]string{}
+	for _, a := range base.Actors {
+		accents[a.ID] = a.Accent
+	}
+	for i, step := range base.Steps {
+		res.Steps = append(res.Steps, ShrinkStep{
+			Index: i + 1, Actor: step.Actor, Accent: accents[step.Actor],
+			Label: step.Label, SQL: strings.TrimSpace(step.SQL),
+			Expect: string(step.Expect), Kept: keptSet[i],
+		})
+	}
+	// The reduction must not claim the original's identity: an explicit `id`
+	// would collide with the scenario it came from when saved alongside it.
+	// Without one the id is derived from whatever file it lands in.
+	forFile := cloneCase(current)
+	forFile.ID = ""
+	forFile.Path = ""
+	if yamlBytes, err := casedef.Marshal(forFile); err == nil {
 		res.YAML = string(yamlBytes)
 	}
 	if res.Minimal == res.Original {
@@ -487,7 +549,7 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 		j.Shrink = res
 	})
 	a.note(ctx, Activity{
-		Kind: KindRunStepped, Tool: "shrink_scenario", ScenarioID: base.ID,
+		Kind: KindAnalysis, Tool: "shrink_scenario", ScenarioID: base.ID,
 		Summary: res.Note,
 	})
 }
@@ -566,4 +628,55 @@ func newJobID() (string, error) {
 		out[i] = alphabet[int(v)%len(alphabet)]
 	}
 	return string(out), nil
+}
+
+// ApplyShrinkInput turns a finished reduction into a scenario on disk.
+type ApplyShrinkInput struct {
+	JobID string `json:"job_id"`
+	// Mode is "replace" to overwrite the scenario it came from, or "new" to
+	// save it as a separate scenario.
+	Mode string `json:"mode"`
+	Path string `json:"path,omitempty" jsonschema:"file path when saving as new; derived from the original when omitted"`
+}
+
+// ApplyShrink writes a minimal reproduction into the library. The YAML comes
+// from the stored job rather than from the caller, so what is saved is exactly
+// what was verified.
+func (a *API) ApplyShrink(ctx context.Context, in ApplyShrinkInput) (SaveScenarioOutput, error) {
+	job, ok := a.jobs.Get(in.JobID)
+	if !ok {
+		return SaveScenarioOutput{}, fmt.Errorf("unknown job %q", in.JobID)
+	}
+	if job.Shrink == nil || strings.TrimSpace(job.Shrink.YAML) == "" {
+		return SaveScenarioOutput{}, errors.New("that job has no reduced scenario to save")
+	}
+
+	if in.Mode == "replace" {
+		if job.ScenarioID == "" {
+			return SaveScenarioOutput{}, errors.New("this reduction came from ad-hoc YAML, so there is no scenario to replace")
+		}
+		return a.UpdateScenario(ctx, UpdateScenarioInput{ID: job.ScenarioID, YAML: job.Shrink.YAML})
+	}
+
+	path := in.Path
+	if path == "" {
+		if existing, err := a.mustCase(job.ScenarioID); err == nil {
+			path = strings.TrimSuffix(existing.Path, ".yaml") + "-minimal.yaml"
+		}
+	}
+
+	// Saved beside the original, it needs a name of its own: two scenarios
+	// sharing a title is confusing in every listing.
+	yaml := job.Shrink.YAML
+	if parsed, err := casedef.Parse([]byte(yaml)); err == nil {
+		if !strings.Contains(strings.ToLower(parsed.Name), "minimal") {
+			parsed.Name += " (minimal repro)"
+			parsed.ID = ""
+			parsed.Path = ""
+			if out, mErr := casedef.Marshal(parsed); mErr == nil {
+				yaml = string(out)
+			}
+		}
+	}
+	return a.CreateScenario(ctx, CreateScenarioInput{YAML: yaml, Path: path})
 }
