@@ -261,7 +261,7 @@ type pageData struct {
 	Nav        string
 	Categories []casedef.Category
 	Broken     map[string]string
-	Runs       []runSummary
+	Runs       []historyEntry
 
 	Case        *casedef.Case
 	Source      string
@@ -297,12 +297,17 @@ type pageData struct {
 	Message string
 }
 
-type runSummary struct {
-	ID       string
-	CaseName string
-	Status   string
-	Cursor   int
-	Total    int
+// historyEntry is one line in the sidebar: a run, live or finished.
+type historyEntry struct {
+	RunID     string
+	CaseID    string
+	CaseName  string
+	Status    string
+	Outcome   string
+	Cursor    int
+	Total     int
+	StartedAt time.Time
+	Live      bool
 }
 
 func (s *Server) base(title, nav string) *pageData {
@@ -320,16 +325,33 @@ func (s *Server) base(title, nav string) *pageData {
 		pd.ChatReady = cfg.Ready()
 		pd.ChatModel = cfg.LLM.Model
 	}
+	// The sidebar is a run log: live runs first, then recent finished ones.
+	live := map[string]bool{}
 	for _, r := range s.mgr.List() {
 		st := r.State()
 		// Draft runs belong to the builder, not to the library.
 		if st.Ephemeral {
 			continue
 		}
-		pd.Runs = append(pd.Runs, runSummary{
-			ID: st.ID, CaseName: st.CaseName, Status: st.Status,
-			Cursor: st.Cursor, Total: st.Total,
+		live[st.ID] = true
+		pd.Runs = append(pd.Runs, historyEntry{
+			RunID: st.ID, CaseID: st.CaseID, CaseName: st.CaseName,
+			Status: st.Status, Cursor: st.Cursor, Total: st.Total,
+			StartedAt: st.Started, Live: true,
 		})
+	}
+	for _, rec := range s.mgr.History().All() {
+		if rec.Ephemeral || live[rec.RunID] {
+			continue
+		}
+		pd.Runs = append(pd.Runs, historyEntry{
+			RunID: rec.RunID, CaseID: rec.CaseID, CaseName: rec.CaseName,
+			Status: rec.Status, Outcome: rec.Outcome,
+			Cursor: rec.Submitted, Total: len(rec.Steps), StartedAt: rec.StartedAt,
+		})
+		if len(pd.Runs) >= 30 {
+			break
+		}
 	}
 	return pd
 }
@@ -449,6 +471,8 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 		"actors": len(c.Actors),
 		"steps":  len(c.Steps),
 		"image":  c.MySQL.Image,
+		// The parsed shape drives the step pane beside the editor.
+		"scenario": chat.ParseDraft(string(body)),
 	})
 }
 

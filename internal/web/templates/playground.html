@@ -54,10 +54,39 @@
         </div>
       </div>
 
-      <div class="panel pg-help">
-        <div class="panel-head"><h2>Format</h2></div>
-        <div class="panel-body">
-          <pre class="yaml small" data-yaml-view>name: Human readable title
+      <!-- The same step pane the builder uses, so a hand-written scenario can
+           be run and watched without leaving the editor. -->
+      <aside class="panel pg-steps-panel">
+        <div class="panel-head">
+          <h2>Steps</h2>
+          <span class="muted" id="pg-valid"></span>
+          <div class="panel-head-actions">
+            <button class="btn btn-sm" id="pg-run" type="button">Test run</button>
+          </div>
+        </div>
+
+        <div class="run-bar" id="pg-run-bar" hidden>
+          <span class="run-bar-status" id="pg-run-status">preparing</span>
+          <span class="run-bar-progress mono" id="pg-run-progress">0/0</span>
+          <span class="run-bar-clock mono" id="pg-run-clock" title="Elapsed since the run started">0s</span>
+          <div class="run-bar-actions">
+            <button class="btn btn-sm" id="pg-run-step" type="button">Step</button>
+            <button class="btn btn-ghost btn-sm" id="pg-run-play" type="button">Play</button>
+            <a class="btn btn-ghost btn-sm" id="pg-run-open" href="#" target="_blank">Full view</a>
+            <button class="btn btn-ghost btn-sm" id="pg-run-close" type="button">Close run</button>
+          </div>
+        </div>
+
+        <div class="panel-body panel-body-flush pg-steps-body">
+          <div class="steps-view" id="pg-steps"></div>
+        </div>
+      </aside>
+    </section>
+
+    <details class="panel pg-format">
+      <summary class="panel-head"><h2>Format reference</h2></summary>
+      <div class="panel-body">
+        <pre class="yaml small" data-yaml-view>name: Human readable title
 category: Gap locks          # optional; folder name is used otherwise
 description: |
   Markdown. **Bold**, `code`, lists and headings all render
@@ -70,8 +99,6 @@ mysql:
   lock_wait_timeout: 300      # seconds, per session
   deadlock_detect: true       # global; false turns deadlocks into timeouts
   prepared: false             # true sends COM_STMT_EXECUTE, binary result rows
-  vars:                       # extra SET SESSION variables
-    sql_mode: STRICT_ALL_TABLES
 
 schema:
   - CREATE TABLE t (...)
@@ -93,45 +120,30 @@ steps:
     note: Shown next to the step in the timeline.
     expect: ok                # ok blocks error deadlock timeout
 </pre>
-
-          <div class="help-note">
-            <h3>How stepping works</h3>
-            <p>
-              Each step is submitted on its actor's own connection and given
-              <strong>{{.Settle}}&#8239;ms</strong> to finish. If it has not returned by then it is
-              marked <em>blocked</em> and left running, so you can advance the other actor and watch
-              the two interact. A blocked step updates itself when it finally succeeds, times out,
-              or is picked as a deadlock victim.
-            </p>
-            <h3>Useful things to assert</h3>
-            <ul>
-              <li><code>expect: blocks</code> — the statement should hit a lock wait. It still
-                counts as met if the statement later completes, times out or is rolled back.</li>
-              <li><code>expect: deadlock</code> — this actor should be the victim (errno 1213).</li>
-              <li><code>expect: timeout</code> — innodb_lock_wait_timeout should fire (errno 1205).</li>
-            </ul>
-            <h3>Ordering rule</h3>
-            <p>
-              A connection runs one statement at a time, so a blocked actor cannot accept its
-              next step. Put the statement that releases the lock — usually a
-              <code>COMMIT</code> on the other actor — before the blocked actor's next step.
-            </p>
-            <h3>Editor</h3>
-            <p>
-              <kbd>Ctrl</kbd>+<kbd>Space</kbd> completes keys and values, including the actor
-              ids this document declares. <kbd>Tab</kbd> indents, <kbd>Enter</kbd> keeps the
-              current indentation.
-            </p>
-          </div>
+        <div class="help-note">
+          <h3>The ordering rule</h3>
+          <p>
+            A connection runs one statement at a time, so a blocked actor cannot accept its
+            next step. Put the statement that releases the lock — usually a
+            <code>COMMIT</code> on the other actor — before the blocked actor's next step.
+            The step pane flags this for you.
+          </p>
+          <h3>Stepping</h3>
+          <p>
+            Each step gets <strong>{{.Settle}}&#8239;ms</strong> to finish before it is
+            reported as blocked, and keeps running in the background after that.
+          </p>
         </div>
       </div>
-    </section>
+    </details>
+
   </main>
 </div>
 <script src="/static/app.js"></script>
 <script src="/static/dialog.js"></script>
 <script src="/static/activity.js"></script>
 <script src="/static/yaml.js"></script>
+<script src="/static/runpane.js"></script>
 <script>window.DL_EDITING = {{if .Editing}}true{{else}}false{{end}};</script>
 <script src="/static/playground.js"></script>
 {{template "assistant-mount" .}}

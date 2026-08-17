@@ -104,5 +104,59 @@
 
   // Syntax highlighting, indentation and completions. Tab handling lives in
   // the editor itself, alongside the completion menu that also wants the key.
-  window.DL.attachEditor(source);
+  var editor = window.DL.attachEditor(source);
+
+  // ------------------------------------------------------------ step pane
+
+  // The same pane the builder uses, so a hand-written scenario can be run and
+  // watched without leaving the editor.
+  var pane = window.DL.createRunPane({
+    stepsEl: document.getElementById('pg-steps'),
+    bar: document.getElementById('pg-run-bar'),
+    statusEl: document.getElementById('pg-run-status'),
+    progressEl: document.getElementById('pg-run-progress'),
+    clockEl: document.getElementById('pg-run-clock'),
+    stepBtn: document.getElementById('pg-run-step'),
+    playBtn: document.getElementById('pg-run-play'),
+    closeBtn: document.getElementById('pg-run-close'),
+    openLink: document.getElementById('pg-run-open'),
+    runBtn: document.getElementById('pg-run'),
+    onNote: function (kind, text) { show(kind === 'error' ? 'error' : 'ok', esc(text)); }
+  });
+
+  var validState = document.getElementById('pg-valid');
+
+  // Reparse as you type, debounced, so the steps track the text without a
+  // request per keystroke.
+  var parseTimer = 0;
+  function refresh() {
+    clearTimeout(parseTimer);
+    parseTimer = setTimeout(function () {
+      fetch('/playground/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: source.value
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res.ok && res.scenario) {
+            pane.setScenario(res.scenario);
+            validState.textContent = res.steps + ' steps · ' + res.actors + ' actors';
+            validState.className = 'muted';
+          } else {
+            pane.setScenario({ valid: false, error: res.error });
+            validState.textContent = 'does not parse';
+            validState.className = 'muted is-invalid';
+          }
+        })
+        .catch(function () {});
+    }, 350);
+  }
+
+  source.addEventListener('input', refresh);
+  refresh();
+
+  document.getElementById('pg-run').addEventListener('click', function () {
+    pane.start(source.value);
+  });
 })();

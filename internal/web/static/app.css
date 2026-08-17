@@ -2348,3 +2348,105 @@ body::before {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) body::before { opacity: .34; }
 }
+
+/* ================================================= sidebar as a run log */
+
+.sidebar-runs-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+.sidebar-link { font-size: 11.5px; color: var(--text-3); }
+.sidebar-link:hover { color: var(--accent); }
+
+.sidebar-history {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-history .run-chip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+}
+.sidebar-history .run-chip:hover { background: var(--surface-3); }
+.sidebar-history .run-chip.is-live {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.sidebar-history .dot { margin-top: 5px; }
+.run-chip-body { flex: 1; min-width: 0; }
+.run-chip-name {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-chip-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 10.5px; }
+.run-chip-meta .mono { color: var(--text-3); }
+.run-chip-time { color: var(--text-3); margin-left: auto; font-family: var(--mono); }
+.run-chip-live {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.sidebar-history .outcome { font-size: 9.5px; padding: 0 5px; }
+
+/* ------------------------------------------------ library page search */
+
+.library-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 11px;
+  min-width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+}
+.library-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+.library-search kbd { font-size: 10px; opacity: .7; }
+.library-search input:focus + kbd, .library-search:focus-within kbd { opacity: 0; }
+
+/* ============================================= playground with a step pane */
+
+.pg-grid { grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); align-items: stretch; }
+.pg-steps-panel { display: flex; flex-direction: column; min-height: 0; }
+.pg-steps-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.pg-steps-panel .steps-view { flex: 1; overflow-y: auto; padding: 12px 13px 18px; }
+.pg-steps-panel .run-bar { border-bottom: 1px solid var(--border); border-radius: 0; }
+.muted.is-invalid { color: var(--danger); }
+
+.pg-format { margin-top: 4px; }
+.pg-format > summary { cursor: pointer; list-style: none; }
+.pg-format > summary::-webkit-details-marker { display: none; }
+.pg-format > summary h2::before { content: "▸ "; color: var(--text-3); font-size: 10px; }
+.pg-format[open] > summary h2::before { content: "▾ "; }

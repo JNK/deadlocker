@@ -43,41 +43,31 @@
     {{end}}
   </div>
 
-  <div class="sidebar-search">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input type="search" id="case-filter" placeholder="Filter scenarios" autocomplete="off" spellcheck="false">
+  <!-- A run log, not a scenario list: the library page is where scenarios are
+       browsed and searched. -->
+  <div class="sidebar-runs-head">
+    <span class="nav-group-title">Runs</span>
+    <a class="sidebar-link" href="/compare">compare</a>
   </div>
 
-  <nav class="sidebar-nav" id="sidebar-nav">
-    {{range .Categories}}
-    <div class="nav-group" data-group>
-      <div class="nav-group-title">{{.Name}}</div>
-      {{range .Cases}}
-      <a class="nav-item{{if eq .ID $.ActiveCase}} is-active{{end}}" data-case
-         href="/case/{{.ID}}" data-name="{{.Name}} {{join .Tags " "}}">
-        <span class="nav-item-name">{{.Name}}</span>
-        <span class="nav-item-meta">{{len .Actors}}&#8239;actors · {{len .Steps}}&#8239;steps</span>
-      </a>
-      {{end}}
-    </div>
-    {{end}}
-    {{if not .Categories}}
-    <p class="sidebar-empty">No scenarios found in the case folder yet.</p>
+  <nav class="sidebar-history">
+    {{range .Runs}}
+    <a class="run-chip{{if .Live}} is-live{{end}}" href="/run/{{.RunID}}">
+      <span class="dot status-{{.Status}}"></span>
+      <span class="run-chip-body">
+        <span class="run-chip-name">{{.CaseName}}</span>
+        <span class="run-chip-meta">
+          <span class="mono">{{.Cursor}}/{{.Total}}</span>
+          {{if .Live}}<span class="run-chip-live">live</span>
+          {{else if .Outcome}}<span class="outcome outcome-{{.Outcome}}">{{.Outcome}}</span>{{end}}
+          <span class="run-chip-time">{{clock .StartedAt}}</span>
+        </span>
+      </span>
+    </a>
+    {{else}}
+    <p class="sidebar-empty">No runs yet. Open a scenario and press Run.</p>
     {{end}}
   </nav>
-
-  {{if .Runs}}
-  <div class="sidebar-runs">
-    <div class="nav-group-title">Live runs</div>
-    {{range .Runs}}
-    <a class="run-chip" href="/run/{{.ID}}">
-      <span class="dot status-{{.Status}}"></span>
-      <span class="run-chip-name">{{.CaseName}}</span>
-      <span class="run-chip-meta">{{.Cursor}}/{{.Total}}</span>
-    </a>
-    {{end}}
-  </div>
-  {{end}}
 
   {{if .Broken}}
   <div class="sidebar-broken">
@@ -91,8 +81,6 @@
   </div>
   {{end}}
 
-  <!-- Bottom actions are icon-and-label items spread across the full width,
-       so the sidebar ends with a balanced row rather than stacked buttons. -->
   <div class="sidebar-foot">
     <a class="foot-item" href="/compare" title="Compare two runs side by side">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v18M5 8h4M5 16h4M15 8h4M15 16h4"/></svg>

@@ -14,6 +14,14 @@
           the locks appear, block each other, and occasionally deadlock.
         </p>
       </div>
+      <div class="page-actions">
+        <div class="library-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="case-filter" placeholder="Filter scenarios and tags"
+                 autocomplete="off" spellcheck="false">
+          <kbd>/</kbd>
+        </div>
+      </div>
     </header>
 
     <section class="card-grid" id="case-grid">
@@ -55,6 +63,7 @@
 <script src="/static/dialog.js"></script>
 <script src="/static/activity.js"></script>
 <script src="/static/yaml.js"></script>
+<script src="/static/runpane.js"></script>
 {{template "assistant-mount" .}}
 </body>
 </html>
