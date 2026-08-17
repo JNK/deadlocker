@@ -69,8 +69,10 @@
 
       if (live && live.error) {
         html += '<div class="steps-error">' + esc(live.error) + '</div>';
-      } else if (live && live.blocked_by && live.blocked_by.length) {
-        html += '<div class="steps-blocked">waiting on ' + esc(live.blocked_by.join(', ')) + '</div>';
+      } else if (live && status === 'blocked') {
+        var who = (live.blocked_by || []).join(', ');
+        html += '<div class="steps-blocked">waiting' + (who ? ' on ' + esc(who) : '') +
+          countdownTag(live) + '</div>';
       } else if (live && live.verdict === 'mismatch') {
         html += '<div class="steps-blocked">' + esc(live.verdict_note || 'unexpected') + '</div>';
       } else if (s.note) {
@@ -81,6 +83,33 @@
     html += '</ol>';
     host.innerHTML = html;
   }
+
+  // countdownTag renders the time left before innodb_lock_wait_timeout fires.
+  function countdownTag(step) {
+    if (!step.submitted_at || !currentTimeout) return '';
+    var started = new Date(step.submitted_at).getTime();
+    if (isNaN(started)) return '';
+    return ' <span class="mini mini-countdown" data-countdown="' +
+      (started + currentTimeout * 1000) + '"></span>';
+  }
+
+  // currentTimeout is the innodb_lock_wait_timeout of the attached run.
+  var currentTimeout = 0;
+
+  // One ticker updates every countdown the pane has rendered.
+  setInterval(function () {
+    document.querySelectorAll('.steps-view [data-countdown]').forEach(function (el) {
+      var left = Number(el.dataset.countdown) - Date.now();
+      if (left <= 0) {
+        el.textContent = 'timeout due';
+        el.classList.add('is-expired');
+        return;
+      }
+      var s = Math.ceil(left / 1000);
+      el.textContent = (s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's') + ' to timeout';
+      el.classList.toggle('is-urgent', left < 10000);
+    });
+  }, 500);
 
   // create wires a pane to its elements. Everything is optional except stepsEl,
   // so a caller that only wants the step list can leave the controls out.
@@ -131,6 +160,7 @@
       if (el.progressEl) {
         el.progressEl.textContent = state ? state.cursor + '/' + state.total : '—';
       }
+      if (state && state.lock_wait_timeout) currentTimeout = state.lock_wait_timeout;
       if (el.clockEl) el.clockEl.textContent = fmtDuration(Date.now() - run.started);
 
       if (status === 'finished' || status === 'closed') {

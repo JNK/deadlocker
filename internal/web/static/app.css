@@ -333,7 +333,13 @@ code, pre, .mono { font-family: var(--mono); }
   padding-top: 24px;
   margin-bottom: 22px;
 }
-.page-header h1 { margin: 2px 0 6px; font-size: 24px; letter-spacing: -.02em; }
+.page-header h1 {
+  margin: 2px 0 6px;
+  font-size: clamp(19px, 2.1vw, 24px);
+  letter-spacing: -.02em;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
 .page-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .lede { margin: 0; max-width: 68ch; color: var(--text-2); }
 .crumb { font-size: 12.5px; color: var(--text-3); }
@@ -1042,8 +1048,19 @@ table.data tr.is-waiting { background: var(--warn-soft); }
   border-bottom-color: var(--border);
   box-shadow: 0 6px 18px -12px rgba(16, 20, 28, .5);
 }
-.page-header-main { flex: 1; min-width: 0; padding-bottom: 12px; }
-.page-header-sticky .page-actions { padding-bottom: 12px; }
+.page-header-main {
+  /* A large flex-basis makes the action row wrap onto its own line instead of
+     crushing the title. Without it the heading breaks one word per line and the
+     sticky header grows tall enough to cover the page beneath it. */
+  flex: 1 1 360px;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+.page-header-sticky .page-actions { padding-bottom: 12px; margin-left: auto; flex: 0 0 auto; }
+
+/* A sticky header must never grow so tall that it covers what it is heading.
+   Past that it scrolls with the page like anything else. */
+.page-header-sticky { max-height: 62vh; }
 .main-tabbed { padding-bottom: 40px; }
 
 /* ==================================================================== tabs */
@@ -2601,3 +2618,26 @@ body::before {
 }
 .shrink-removed { margin: 0 0 14px; padding-left: 20px; font-size: 12.5px; color: var(--text-2); }
 .shrink-removed li { margin-bottom: 3px; }
+
+
+/* Content targeted by a click or an anchor clears the sticky header. */
+.tab-panel .panel, .analysis-panel { scroll-margin-top: 90px; }
+
+/* --------------------------------------------- sidebar: selected vs live */
+
+/* Selection is the highlight; "live" is a state badge. Colouring every live
+   run made it look like several things were selected at once. */
+.sidebar-history .run-chip.is-live { background: transparent; border-color: transparent; }
+.sidebar-history .run-chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.sidebar-history .run-chip.is-active .run-chip-name { color: var(--accent); font-weight: 600; }
+.sidebar-history .run-chip.is-active:hover { background: var(--accent-soft); }
+
+/* A statement waiting on a lock is on a clock: innodb_lock_wait_timeout will
+   end it. Showing the time left turns "it is stuck" into "it has 12s left". */
+.mini-countdown { background: var(--warn-soft); color: var(--warn); font-variant-numeric: tabular-nums; }
+.mini-countdown.is-urgent { background: var(--danger-soft); color: var(--danger); }
+.mini-countdown.is-expired { background: var(--danger); color: #fff; }
+.steps-blocked .mini-countdown { margin-left: 6px; }

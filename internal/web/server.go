@@ -176,6 +176,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /case/{id}", s.handleCase)
 	mux.HandleFunc("GET /compare", s.handleCompare)
 	mux.HandleFunc("GET /api/history", s.handleHistoryAPI)
+	mux.HandleFunc("GET /api/runs", s.handleRunsAPI)
 	mux.HandleFunc("POST /api/analyse/{kind}", s.handleAnalyse)
 	mux.HandleFunc("GET /api/job/{id}", s.handleJob)
 	mux.HandleFunc("GET /playground", s.handlePlayground)
@@ -269,11 +270,15 @@ type pageData struct {
 	Source      string
 	Description template.HTML
 
-	Sequence  []sequenceRow
-	Run       *engine.RunState
-	Steps     []*engine.StepResult
-	CaseSteps []casedef.Step
-	Settle    int64
+	Sequence []sequenceRow
+	Run      *engine.RunState
+	// Archived marks a run that has finished and been closed: it is rendered
+	// from its history record, with no live stream and no controls.
+	Archived      bool
+	ArchivedLocks *engine.LockSnapshot
+	Steps         []*engine.StepResult
+	CaseSteps     []casedef.Step
+	Settle        int64
 
 	History    []*engine.Record
 	AllHistory []*engine.Record
@@ -283,6 +288,8 @@ type pageData struct {
 	Editing bool
 	// ActiveCase highlights the scenario this page belongs to in the sidebar.
 	ActiveCase string
+	// ActiveRun highlights the run being viewed.
+	ActiveRun string
 	// OpenBuilder opens the assistant sheet as soon as the page loads.
 	OpenBuilder bool
 
@@ -315,15 +322,15 @@ type sequenceRow struct {
 }
 
 type historyEntry struct {
-	RunID     string
-	CaseID    string
-	CaseName  string
-	Status    string
-	Outcome   string
-	Cursor    int
-	Total     int
-	StartedAt time.Time
-	Live      bool
+	RunID     string    `json:"run_id"`
+	CaseID    string    `json:"case_id"`
+	CaseName  string    `json:"case_name"`
+	Status    string    `json:"status"`
+	Outcome   string    `json:"outcome,omitempty"`
+	Cursor    int       `json:"cursor"`
+	Total     int       `json:"total"`
+	StartedAt time.Time `json:"started_at"`
+	Live      bool      `json:"live"`
 }
 
 func (s *Server) base(title, nav string) *pageData {
@@ -593,14 +600,23 @@ func (s *Server) startAndRespond(w http.ResponseWriter, r *http.Request, c *case
 }
 
 func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.mgr.Get(r.PathValue("id"))
+	id := r.PathValue("id")
+	run, ok := s.mgr.Get(id)
 	if !ok {
+		// A closed run leaves the manager but stays in the history, and its
+		// recorded result is still worth looking at. Rendering that beats a 404
+		// from a link the sidebar itself offered.
+		if rec, found := s.mgr.History().Get(id); found {
+			s.renderArchivedRun(w, rec)
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}
 	st := run.State()
 	pd := s.base(st.CaseName, "run")
 	pd.ActiveCase = st.CaseID
+	pd.ActiveRun = st.ID
 	pd.Run = &st
 	pd.Steps = run.Steps()
 	pd.Case = run.Case
@@ -817,4 +833,50 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleRunsAPI serves the sidebar's run list, so it can be refreshed in place
+// rather than only at page load.
+func (s *Server) handleRunsAPI(w http.ResponseWriter, r *http.Request) {
+	pd := s.base("", "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "runs": pd.Runs})
+}
+
+// renderArchivedRun shows a finished run from its history record. Actors are
+// reconstructed from the steps, which each carry their actor's name and colour,
+// so no separate actor list has to be retained.
+func (s *Server) renderArchivedRun(w http.ResponseWriter, rec *engine.Record) {
+	st := engine.RunState{
+		ID: rec.RunID, CaseID: rec.CaseID, CaseName: rec.CaseName,
+		Status: "closed", Image: rec.Image, Isolation: rec.Isolation,
+		LockWaitTimeout: rec.LockWaitTimeout, Started: rec.StartedAt,
+		Total: len(rec.Steps), Cursor: rec.Submitted,
+		DeadlockReport: rec.DeadlockReport,
+	}
+
+	seen := map[string]bool{}
+	for _, step := range rec.Steps {
+		if step.Actor == "" || seen[step.Actor] {
+			continue
+		}
+		seen[step.Actor] = true
+		st.Actors = append(st.Actors, engine.ActorState{
+			ID: step.Actor, Name: step.ActorName, Accent: step.Accent,
+		})
+	}
+
+	pd := s.base(rec.CaseName, "run")
+	pd.ActiveCase = rec.CaseID
+	pd.ActiveRun = rec.RunID
+	pd.Run = &st
+	pd.Steps = rec.Steps
+	pd.Archived = true
+	pd.ArchivedLocks = rec.FinalLocks
+	pd.Settle = s.mgr.SettleWindow().Milliseconds()
+	pd.History = s.mgr.History().ForCase(rec.CaseID)
+	if c, ok := s.lib.Get(rec.CaseID); ok {
+		pd.Case = c
+		pd.CaseSteps = c.Steps
+	}
+	s.render(w, "run.html", pd)
 }

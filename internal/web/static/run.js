@@ -63,6 +63,11 @@
     if (step.status === 'blocked') {
       var by = (step.blocked_by || []).map(actorName).join(', ');
       bits.push('<span class="mini mini-warn">waiting' + (by ? ' on ' + esc(by) : '') + '</span>');
+      // How long this statement has before innodb_lock_wait_timeout ends it.
+      var deadline = timeoutDeadline(step);
+      if (deadline) {
+        bits.push('<span class="mini mini-countdown" data-countdown="' + deadline + '"></span>');
+      }
     } else if (step.was_blocked) {
       bits.push('<span class="mini mini-warn" title="This statement waited on a lock before it finished">was blocked</span>');
     }
@@ -77,6 +82,37 @@
       bits.push('<span class="mini mini-danger" title="' + esc(step.verdict_note || '') + '">✕ ' + esc(step.verdict_note || 'unexpected') + '</span>');
     }
     foot.innerHTML = bits.join('');
+  }
+
+  // timeoutDeadline is when innodb_lock_wait_timeout will fire for a statement
+  // that is currently waiting, in epoch milliseconds.
+  function timeoutDeadline(step) {
+    var secs = state.run && state.run.lock_wait_timeout;
+    if (!secs || !step.submitted_at) return 0;
+    var started = new Date(step.submitted_at).getTime();
+    if (isNaN(started)) return 0;
+    return started + secs * 1000;
+  }
+
+  // A single ticker drives every countdown on the page.
+  setInterval(function () {
+    document.querySelectorAll('[data-countdown]').forEach(function (el) {
+      var left = Number(el.dataset.countdown) - Date.now();
+      if (left <= 0) {
+        el.textContent = 'timeout due';
+        el.classList.add('is-expired');
+        return;
+      }
+      el.textContent = formatCountdown(left) + ' to timeout';
+      el.classList.toggle('is-urgent', left < 10000);
+    });
+  }, 500);
+
+  function formatCountdown(ms) {
+    var s = Math.ceil(ms / 1000);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60);
+    return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
   }
 
   function errorLabel(err) {
@@ -152,6 +188,14 @@
     }
 
     if (step.status === 'blocked') {
+      var dl = timeoutDeadline(step);
+      if (dl) {
+        html += '<div class="callout callout-warn"><h4>Lock wait timeout</h4>' +
+          'This statement will fail with error 1205 in ' +
+          '<strong data-countdown="' + dl + '"></strong> unless the lock is released first. ' +
+          'innodb_lock_wait_timeout is ' + esc(String(state.run.lock_wait_timeout)) + 's for this run.' +
+          '</div>';
+      }
       html += '<div class="callout callout-warn"><h4>Blocked</h4>' +
         (step.wait_explain
           ? esc(step.wait_explain)
@@ -543,6 +587,28 @@
 
   // ---------------------------------------------------------- run state
 
+  // wireArchivedOnly leaves a finished run browsable: step selection, the dock
+  // and its tabs all work; nothing that would mutate the run exists.
+  function wireArchivedOnly() {
+    document.querySelectorAll('[data-step-card]').forEach(function (card) {
+      card.addEventListener('click', function () { selectStep(Number(card.dataset.stepCard)); });
+    });
+    document.querySelectorAll('.dock-tab').forEach(function (t) {
+      t.addEventListener('click', function () { activateTab(t.dataset.tab); });
+    });
+    document.getElementById('locks-granted').addEventListener('change', renderLocks);
+    setupDockResize();
+    renderAllSteps();
+    renderRunState();
+    if (window.DL_ARCHIVED_LOCKS) {
+      state.locks = window.DL_ARCHIVED_LOCKS;
+      renderLocks();
+    }
+    document.querySelector('[data-lanes-end]').textContent =
+      'This run has finished and its database was dropped. Showing the recorded result.';
+    connState.textContent = 'finished';
+  }
+
   function renderRunState() {
     var st = state.run;
     var badge = document.querySelector('[data-run-status]');
@@ -561,10 +627,12 @@
     var stepBtn = document.getElementById('btn-step');
     var playBtn = document.getElementById('btn-play');
     var done = st.cursor >= st.total;
-    stepBtn.disabled = done || st.status === 'closed' || st.status === 'failed';
-    playBtn.disabled = stepBtn.disabled;
-    document.querySelector('[data-lanes-end]').textContent =
-      done ? 'End of scenario — every step has been submitted.' : 'Press Step to submit step ' + (st.cursor + 1) + '.';
+    if (stepBtn && playBtn) {
+      stepBtn.disabled = done || st.status === 'closed' || st.status === 'failed';
+      playBtn.disabled = stepBtn.disabled;
+      document.querySelector('[data-lanes-end]').textContent =
+        done ? 'End of scenario — every step has been submitted.' : 'Press Step to submit step ' + (st.cursor + 1) + '.';
+    }
 
     if (st.deadlock_report) {
       document.getElementById('deadlock-report').innerHTML =
@@ -694,7 +762,14 @@
       .finally(function () { busy = false; renderRunState(); });
   }
 
-  document.getElementById('btn-step').addEventListener('click', doStep);
+  var stepBtnEl = document.getElementById('btn-step');
+  if (!stepBtnEl) {
+    // Archived run: no controls to wire, and no keyboard stepping either.
+    wireArchivedOnly();
+    return;
+  }
+
+  stepBtnEl.addEventListener('click', doStep);
   document.getElementById('btn-play').addEventListener('click', doPlay);
   document.getElementById('btn-snapshot').addEventListener('click', function () {
     postJSON('/run/' + runID + '/snapshot').then(function (res) {
@@ -768,7 +843,7 @@
 
   // ------------------------------------------------------- resizable drawer
 
-  (function setupDockResize() {
+  function setupDockResize() {
     var dock = document.getElementById('dock');
     var handle = document.getElementById('dock-resize');
     var split = document.querySelector('.run-split');
@@ -822,11 +897,26 @@
       split.style.setProperty('--dock-h', DEFAULT);
       try { localStorage.removeItem('dl-dock-height'); } catch (e) {}
     });
-  })();
+  }
+  setupDockResize();
 
   // ------------------------------------------------------------- start up
 
   renderAllSteps();
   renderRunState();
-  connect();
+
+  if (window.DL_ARCHIVED) {
+    // A finished run has no stream to join. Everything on screen came from its
+    // history record, including the locks it ended with.
+    connState.textContent = 'finished';
+    connState.className = 'conn-state';
+    if (window.DL_ARCHIVED_LOCKS) {
+      state.locks = window.DL_ARCHIVED_LOCKS;
+      renderLocks();
+    }
+    document.querySelector('[data-lanes-end]').textContent =
+      'This run has finished and its database was dropped. Showing the recorded result.';
+  } else {
+    connect();
+  }
 })();

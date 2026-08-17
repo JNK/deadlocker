@@ -50,9 +50,10 @@
     <a class="sidebar-link" href="/compare">compare</a>
   </div>
 
-  <nav class="sidebar-history">
+  <nav class="sidebar-history" id="sidebar-history">
     {{range .Runs}}
-    <a class="run-chip{{if .Live}} is-live{{end}}" href="/run/{{.RunID}}">
+    <a class="run-chip{{if .Live}} is-live{{end}}{{if eq .RunID $.ActiveRun}} is-active{{end}}"
+       data-run-id="{{.RunID}}" href="/run/{{.RunID}}">
       <span class="dot status-{{.Status}}"></span>
       <span class="run-chip-body">
         <span class="run-chip-name">{{.CaseName}}</span>
