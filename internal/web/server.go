@@ -164,6 +164,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /static/", static)
 
 	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.HandleFunc("GET /builder", s.handleBuilder)
 	mux.HandleFunc("GET /case/{id}", s.handleCase)
 	mux.HandleFunc("GET /compare", s.handleCompare)
 	mux.HandleFunc("GET /api/history", s.handleHistoryAPI)
@@ -269,6 +270,8 @@ type pageData struct {
 	Editing bool
 	// ActiveCase highlights the scenario this page belongs to in the sidebar.
 	ActiveCase string
+	// OpenBuilder opens the assistant sheet as soon as the page loads.
+	OpenBuilder bool
 
 	Config         *store.Config
 	ConfigVersion  uint64
@@ -330,6 +333,21 @@ func (s *Server) render(w http.ResponseWriter, name string, data *pageData) {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	pd := s.base("Scenarios", "library")
+	s.render(w, "index.html", pd)
+}
+
+// handleBuilder is the assistant builder as a navigable page. It renders the
+// library and opens the builder sheet over it, so the URL is shareable and
+// closing the sheet lands on the scenario list.
+func (s *Server) handleBuilder(w http.ResponseWriter, r *http.Request) {
+	pd := s.base("Scenario builder", "library")
+	pd.OpenBuilder = true
+	if from := r.URL.Query().Get("from"); from != "" {
+		if c, ok := s.lib.Get(from); ok {
+			pd.Case = c
+			pd.ActiveCase = c.ID
+		}
+	}
 	s.render(w, "index.html", pd)
 }
 

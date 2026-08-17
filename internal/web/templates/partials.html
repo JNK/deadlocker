@@ -239,6 +239,9 @@
 {{define "assistant-mount"}}
 {{if .ChatReady}}
 {{template "builder-sheet" .}}
+{{if .OpenBuilder}}
+<script>window.DL_OPEN_BUILDER = {scenarioID: "{{.ActiveCase}}"};</script>
+{{end}}
 <script src="/static/md.js"></script>
 <script src="/static/chatcore.js"></script>
 <script src="/static/assistant.js"></script>

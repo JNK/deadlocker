@@ -62,9 +62,12 @@ check('every hidden-by-default element resolves to a real element', () => {
     'the builder backdrop must start hidden');
 });
 
-check('the builder sheet is never opened automatically', () => {
-  assert.ok(!/DL_OPEN_BUILDER/.test(html),
-    'found an auto-open hook; the sheet must only open on an explicit action');
+check('the builder only auto-opens behind an explicit route flag', () => {
+  const hooks = [...html.matchAll(/DL_OPEN_BUILDER/g)];
+  if (hooks.length === 0) return; // no auto-open at all is also fine
+  assert.match(html, /\{\{if \.OpenBuilder\}\}[\s\S]{0,200}DL_OPEN_BUILDER/,
+    'the auto-open hook must be guarded by {{if .OpenBuilder}}, so it only ' +
+    'fires on the /builder route and never on an ordinary page');
 });
 
 // The sticky header must sit flush against the top of its scroll container.

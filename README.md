@@ -277,10 +277,12 @@ Two separate surfaces, because they are different jobs:
 - **Discuss** — a docked bubble on a scenario or run page. Ask why something
   blocks, or propose a change and have it run the variant and report what
   actually happened. Closes freely; Escape dismisses it.
-- **Build** — opened from **Build with the assistant** in the sidebar, or from
-  **Edit with assistant** on a scenario. A modal sheet with the conversation on
-  one side and the scenario taking shape on the other: a step list that fills in as it is drafted, with
-  the YAML source as a toggle. A test run stays inside the sheet and drives that
+- **Build** — opened from **Build with the assistant** in the sidebar, from
+  **Edit with assistant** on a scenario, or by navigating to `/builder`
+  (`/builder?from=<id>` to edit one). A modal sheet with the conversation on
+  one side and the scenario taking shape on the other: a step list that fills in as it is drafted, with a
+  Source tab that has the same YAML highlighting and schema-aware completion as
+  the playground editor. A test run stays inside the sheet and drives that
   same step list live, with a stopwatch, rather than throwing you into another
   tab. The assistant is instructed to draft, run, and correct before claiming
   anything works. This one is deliberately hard to close by accident: Escape is

@@ -167,7 +167,7 @@
         if (!res.ok) { el.log.note('error', res.error); return; }
         st.session = res.session;
         if (res.draft) {
-          el.draft.value = res.draft;
+          setDraftValue(res.draft);
           st.savedDraft = res.draft;
           st.scenario = res.scenario;
           renderSteps(el.steps, res.scenario, null);
@@ -209,6 +209,13 @@
       var current = el.draft.value.trim();
       if (!current) return false;
       return current !== (st.savedDraft || '').trim();
+    }
+
+    // setDraftValue writes the textarea and refreshes the highlight layer,
+    // which only repaints on input events of its own.
+    function setDraftValue(yaml) {
+      el.draft.value = yaml;
+      if (st.editor) st.editor.repaint();
     }
 
     function paint(dirty) {
@@ -334,7 +341,7 @@
         onSend: function (text) {
           st.turn = C.runTurn(st.session, text, el.log, {
             draft: function (data) {
-              el.draft.value = data.yaml || '';
+              setDraftValue(data.yaml || '');
               st.savedDraft = st.savedDraft || '';
               st.scenario = data.scenario;
               renderSteps(el.steps, data.scenario, st.run && st.run.steps
@@ -362,6 +369,11 @@
       el.draftApply.addEventListener('click', applyDraft);
       el.save.addEventListener('click', saveDraft);
       el.run.addEventListener('click', testRun);
+      // Syntax highlighting and completions, the same editor the playground
+      // uses. attachEditor owns the textarea's key handling from here.
+      if (window.DL.attachEditor) {
+        st.editor = window.DL.attachEditor(el.draft);
+      }
       el.draft.addEventListener('input', function () { paint(isDraftDirty()); });
 
       el.viewToggle.querySelectorAll('[data-view]').forEach(function (b) {
@@ -379,6 +391,9 @@
 
       document.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape' || !st.open) return;
+        // The YAML completion menu gets Escape first: dismissing it is what the
+        // user means there, not closing the whole builder.
+        if (el.sheet.querySelector('.ac-menu:not([hidden])')) return;
         e.preventDefault();
         e.stopPropagation();
         el.status.textContent = 'Escape is disabled here — use ✕ to close';
@@ -401,6 +416,10 @@
           });
         });
       });
+
+      // /builder opens the sheet on load. The library renders underneath, so
+      // closing it leaves the user on the scenario list.
+      if (window.DL_OPEN_BUILDER) open(window.DL_OPEN_BUILDER);
     }
 
     return { init: init, open: open };
