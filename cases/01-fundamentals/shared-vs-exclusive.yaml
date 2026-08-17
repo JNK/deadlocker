@@ -1,0 +1,83 @@
+name: Shared locks coexist, exclusive locks do not
+category: Fundamentals
+tags: [shared-lock, for-share, for-update, lock-compatibility]
+description: |
+  FOR SHARE takes an S lock; FOR UPDATE takes an X lock. Two S locks on the
+  same record are compatible, so both readers proceed. An X lock is compatible
+  with nothing.
+
+  This is also the shape of a very common production bug: a "read, check, then
+  write" transaction that reads with FOR SHARE and later upgrades to FOR UPDATE.
+  With two sessions doing it at once you get contention here, and with the
+  timing slightly different you get a deadlock — see the duplicate key scenario
+  for the version that actually deadlocks.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000), (20, 'grace', 7000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Read account 10 with a shared lock
+    sql: SELECT * FROM accounts WHERE id = 10 FOR SHARE
+    note: S,REC_NOT_GAP on PRIMARY at key 10.
+    expect: ok
+
+  - actor: b
+    label: Read the same row with a shared lock
+    sql: SELECT * FROM accounts WHERE id = 10 FOR SHARE
+    note: >-
+      No wait at all. The Locks tab now shows two GRANTED S locks on the same
+      record, one per session. Shared means shared.
+    expect: ok
+
+  - actor: b
+    label: Now try to upgrade to exclusive
+    sql: SELECT * FROM accounts WHERE id = 10 FOR UPDATE
+    note: >-
+      Blocks, because Session A still holds its S lock. Session B already holds
+      an S lock on this record itself, which is fine — a transaction never
+      conflicts with itself.
+    expect: blocks
+
+  - actor: a
+    label: Commit and release the shared lock
+    sql: COMMIT
+    note: Session B's upgrade is granted immediately.
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

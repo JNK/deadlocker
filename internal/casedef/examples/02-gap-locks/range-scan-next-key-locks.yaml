@@ -1,0 +1,98 @@
+name: A range scan takes next-key locks over everything it reads
+category: Gap locks
+tags: [next-key-lock, range-scan, phantom]
+description: |
+  Equality lookups lock one point. A range lookup locks the whole stretch it
+  scanned — every record it read plus the gap before each one. That combination
+  is a next-key lock, and it is the default unit of locking in REPEATABLE READ.
+
+  The purpose is phantom prevention: if Session A re-runs its range query before
+  committing, it must see the same rows. The only way to guarantee that is to
+  stop anyone inserting into the range in the meantime.
+
+  Note that the scan also locks slightly past the end of the requested range.
+  InnoDB has to read one record beyond the last match to know the range is over,
+  and it locks that record too. That surprises people who reason about the WHERE
+  clause rather than about the index traversal.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE items (
+      id    INT NOT NULL,
+      label VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO items (id, label) VALUES (10, 'ten'), (20, 'twenty'), (30, 'thirty'), (100, 'hundred')
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+  - id: c
+    name: Session C
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock everything between 10 and 30
+    sql: SELECT * FROM items WHERE id BETWEEN 10 AND 30 FOR UPDATE
+    note: >-
+      Three rows returned, considerably more than three locks taken. Open the
+      Locks tab and read the modes: next-key locks on 10, 20 and 30, and a lock
+      reaching past 30 because the scan had to look at 100 to know it was done.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: c
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Insert 15, inside the range
+    sql: INSERT INTO items (id, label) VALUES (15, 'fifteen')
+    note: Blocks. This is the phantom the range lock exists to prevent.
+    expect: blocks
+
+  - actor: c
+    label: Insert 200, well above the range
+    sql: INSERT INTO items (id, label) VALUES (200, 'two hundred')
+    note: >-
+      Succeeds. The gap above 100 was never touched by the scan. Try changing
+      this to 50 in the playground and see what happens — 50 sits in the gap
+      between 30 and 100, which the scan did lock on its way past.
+    expect: ok
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: c
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

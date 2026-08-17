@@ -1,0 +1,98 @@
+name: A gap lock blocks one range and nothing else
+category: Gap locks
+tags: [gap-lock, insert-intention, range]
+description: |
+  The UUIDv7 scenario is alarming because every new key lands in one gap. This
+  scenario shows the flip side: a gap lock really is narrow. It just happens to
+  be pointed at exactly the wrong place when your keys are time-ordered.
+
+  Rows exist at 10, 20 and 30. Session A looks up id 15, which does not exist,
+  so it locks the gap between 10 and 20. Session B then tries to insert 17 —
+  inside the gap — and blocks. Session C inserts 25, in a different gap, and
+  does not.
+
+  Three actors are used here because a blocked connection cannot run anything
+  else: Session B is stuck, so the contrasting insert needs its own session.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE items (
+      id    INT NOT NULL,
+      label VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO items (id, label) VALUES (10, 'ten'), (20, 'twenty'), (30, 'thirty')
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+  - id: c
+    name: Session C
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Look up id 15, which does not exist
+    sql: SELECT * FROM items WHERE id = 15 FOR UPDATE
+    note: >-
+      Zero rows. The Locks tab shows X,GAP on PRIMARY with LOCK_DATA 20 — the
+      gap is named after the record that follows it, so "gap before 20" means
+      the open interval (10, 20).
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: c
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Insert 17, inside the locked gap
+    sql: INSERT INTO items (id, label) VALUES (17, 'seventeen')
+    note: Blocks. X,GAP,INSERT_INTENTION waiting on Session A's gap lock.
+    expect: blocks
+
+  - actor: c
+    label: Insert 25, in a different gap
+    sql: INSERT INTO items (id, label) VALUES (25, 'twenty-five')
+    note: >-
+      Succeeds immediately. The gap (20, 30) was never locked. Two inserts into
+      the same table, one blocked and one not, decided entirely by which gap the
+      key falls into.
+    expect: ok
+
+  - actor: a
+    label: Commit and release the gap
+    sql: COMMIT
+    note: Session B's insert completes.
+    expect: ok
+
+  - actor: c
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

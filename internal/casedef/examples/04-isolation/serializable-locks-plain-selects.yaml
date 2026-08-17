@@ -1,0 +1,80 @@
+name: SERIALIZABLE turns every plain SELECT into a locking read
+category: Isolation levels
+tags: [serializable, shared-lock, isolation]
+description: |
+  Under SERIALIZABLE, InnoDB silently rewrites every plain SELECT as
+  SELECT ... FOR SHARE (as long as autocommit is off, which it is inside a
+  transaction).
+
+  So a read-only reporting query stops being read-only from the lock manager's
+  point of view. It takes shared next-key locks over everything it touches, and
+  any writer to those rows waits behind it.
+
+  This is the level people reach for when they want correctness without thinking
+  about it. It does deliver that. It also converts read traffic into lock
+  traffic, which is a surprise if you arrive at it from REPEATABLE READ, where
+  the same SELECT would have been served from a consistent snapshot with no
+  locks at all.
+
+  Change the isolation line to REPEATABLE READ in the playground and re-run to
+  see step 5 stop blocking.
+
+mysql:
+  image: mysql:8.4
+  isolation: SERIALIZABLE
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000), (20, 'grace', 7000)
+
+actors:
+  - id: a
+    name: Reporting query
+    accent: violet
+  - id: b
+    name: Writer
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: An ordinary, innocent SELECT
+    sql: SELECT id, owner, cents FROM accounts WHERE id = 10
+    note: >-
+      No FOR SHARE, no FOR UPDATE. Look at the Locks tab anyway: S,REC_NOT_GAP on
+      PRIMARY at key 10.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Update the row that was merely read
+    sql: UPDATE accounts SET cents = cents + 1 WHERE id = 10
+    note: Blocks behind a SELECT that took no explicit lock at all.
+    expect: blocks
+
+  - actor: a
+    label: Commit the reporting transaction
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

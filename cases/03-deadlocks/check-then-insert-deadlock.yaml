@@ -1,0 +1,110 @@
+name: Check-then-insert deadlocks two requests on the same gap
+category: Deadlocks
+tags: [deadlock, gap-lock, insert-intention, uuidv7, check-then-insert]
+description: |
+  This is the UUIDv7 gap lock scenario with one more turn of the screw, and it
+  is where the "harmless" lookup stops merely blocking and starts deadlocking.
+
+  The application pattern is everywhere: look the row up FOR UPDATE, and insert
+  it if it was not there. Two requests doing it concurrently go like this:
+
+    1. Both look up a missing id. Both take a gap lock on the same gap — and
+       crucially, gap locks do NOT conflict with each other. Both succeed. No
+       warning signs at all.
+    2. Both then insert. An insert needs an insert intention lock on the gap,
+       and insert intention DOES conflict with another transaction's gap lock.
+       So each request waits for a gap lock the other one is holding.
+
+  That is a cycle, and InnoDB rolls one of them back with error 1213.
+
+  With UUIDv7 keys the two ids do not even have to be close together. Both are
+  above the current maximum, so both fall in the supremum gap and it is the same
+  gap every time.
+
+  Steps 3 and 4 are the important ones to sit with: two gap locks, both GRANTED,
+  on the same gap, held by different transactions. That is the loaded gun.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE bookings (
+      id     CHAR(36) NOT NULL,
+      guest  VARCHAR(64) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - |
+    INSERT INTO bookings (id, guest) VALUES
+      ('01912f00-0000-7000-8000-000000000001', 'ada'),
+      ('01912f10-0000-7000-8000-000000000002', 'grace')
+
+actors:
+  - id: a
+    name: Request A
+    accent: blue
+  - id: b
+    name: Request B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Does booking A already exist?
+    sql: SELECT * FROM bookings WHERE id = '01912f90-0000-7000-8000-0000000000aa' FOR UPDATE
+    note: No. Gap lock taken on the supremum gap.
+    expect: ok
+
+  - actor: b
+    label: Does booking B already exist?
+    sql: SELECT * FROM bookings WHERE id = '01912f91-0000-7000-8000-0000000000bb' FOR UPDATE
+    note: >-
+      Also no, and it does not block. Two gap locks on the same gap, both
+      GRANTED — check the Locks tab. Gap locks are compatible with one another
+      because they assert "nothing may be inserted here", which two parties can
+      agree on simultaneously.
+    expect: ok
+
+  - actor: a
+    label: It did not exist, so insert it
+    sql: INSERT INTO bookings (id, guest) VALUES ('01912f90-0000-7000-8000-0000000000aa', 'marie')
+    note: >-
+      Blocks. The insert intention lock conflicts with Request B's gap lock,
+      even though the row being inserted is not Request B's row.
+    expect: blocks
+
+  - actor: b
+    label: It did not exist, so insert it
+    sql: INSERT INTO bookings (id, guest) VALUES ('01912f91-0000-7000-8000-0000000000bb', 'katherine')
+    note: >-
+      Closes the cycle. One request dies with error 1213 and the other one's
+      insert is granted immediately.
+    expect: deadlock
+
+  - actor: a
+    label: Commit the survivor
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Roll back the victim
+    sql: ROLLBACK
+    note: >-
+      In a real application this is where the retry goes. Retrying is correct
+      here, but the better fix is to stop taking the gap lock at all: insert
+      first and handle the duplicate key error, or use INSERT ... ON DUPLICATE
+      KEY UPDATE, or drop to READ COMMITTED.
+    expect: ok

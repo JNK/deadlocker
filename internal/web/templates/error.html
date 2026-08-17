@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main">
+    <header class="page-header">
+      <div>
+        <div class="crumb"><a href="/">Scenarios</a></div>
+        <h1>Could not start the run</h1>
+      </div>
+    </header>
+    <section class="panel panel-danger">
+      <div class="panel-head"><h2>{{if .Case}}{{.Case.Name}}{{else}}Error{{end}}</h2></div>
+      <div class="panel-body">
+        <pre class="error-text">{{.Error}}</pre>
+        <p class="muted">
+          Common causes: Docker is not running, the image could not be pulled, or a schema
+          statement in the scenario is invalid.
+        </p>
+        <div class="page-actions">
+          {{if .Case}}
+          <form method="post" action="/run">
+            <input type="hidden" name="case_id" value="{{.Case.ID}}">
+            <button class="btn btn-primary" type="submit">Try again</button>
+          </form>
+          <a class="btn btn-ghost" href="/case/{{.Case.ID}}">Back to the scenario</a>
+          {{else}}
+          <a class="btn btn-ghost" href="/">Back to the library</a>
+          {{end}}
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script src="/static/activity.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

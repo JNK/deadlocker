@@ -1,0 +1,93 @@
+name: A record lock on an existing row
+category: Fundamentals
+tags: [record-lock, select-for-update, rec-not-gap]
+description: |
+  The simplest possible contention, and the baseline everything else is
+  measured against.
+
+  Two sessions want the same existing row. The first takes an exclusive lock
+  with SELECT ... FOR UPDATE; the second waits until the first commits.
+
+  The detail worth noticing is the lock mode in the Locks tab: X,REC_NOT_GAP.
+  That suffix means "the record only, not the gap before it". InnoDB is allowed
+  to skip the gap here because the search used a unique index with an equality
+  condition and actually found the row — so no phantom can appear and there is
+  nothing else to protect.
+
+  Every other scenario in this library is a variation on why InnoDB could not
+  take that shortcut.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id),
+      KEY idx_owner (owner)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000), (20, 'grace', 7000), (30, 'katherine', 9000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock account 10
+    sql: SELECT * FROM accounts WHERE id = 10 FOR UPDATE
+    note: >-
+      One row, one lock. The Locks tab shows X,REC_NOT_GAP on PRIMARY at key 10,
+      plus the table-level IX intention lock every row-locking statement takes
+      first.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Ask for the same row
+    sql: SELECT * FROM accounts WHERE id = 10 FOR UPDATE
+    note: >-
+      Blocks. Two exclusive locks on one record cannot coexist. Note that
+      Session B is now stuck: a connection runs one statement at a time, so
+      nothing else can be submitted on it until this returns. Only Session A can
+      make progress from here.
+    expect: blocks
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    note: Session B's waiting statement is granted the moment this lands.
+    expect: ok
+
+  - actor: b
+    label: A different row was never contended
+    sql: SELECT * FROM accounts WHERE id = 30 FOR UPDATE
+    note: >-
+      Instant. Row locks are precise: account 30 was never involved, so nothing
+      Session A did could have delayed it.
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

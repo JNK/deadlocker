@@ -1,0 +1,101 @@
+name: The classic AB-BA deadlock
+category: Deadlocks
+tags: [deadlock, error-1213, lock-ordering]
+description: |
+  Two transactions, two rows, opposite order. A locks 10 then wants 20; B locks
+  20 then wants 10. Neither can proceed and neither will ever give up, so
+  InnoDB breaks the cycle by rolling one of them back with error 1213.
+
+  Deadlock detection is on by default and runs continuously: InnoDB maintains a
+  wait-for graph and reacts the instant a cycle closes, rather than waiting for
+  a timeout. The victim is the transaction InnoDB judges cheaper to undo,
+  roughly by how many rows it has modified. With both transactions equally
+  small the choice is not something to rely on — if the mismatch marker lands on
+  Session A instead of Session B on your run, that is the lesson, not a bug.
+
+  Open the Deadlock report tab afterwards. InnoDB prints the full narrative:
+  both transactions, the locks each held, the lock each waited for, and which
+  one it rolled back. innodb_print_all_deadlocks is enabled on this server, so
+  the same report also appears in the Container log tab.
+
+  The fix is lock ordering: if every transaction touches rows in the same order
+  — say, ascending primary key — this cycle cannot form.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000), (20, 'grace', 7000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Debit account 10
+    sql: UPDATE accounts SET cents = cents - 100 WHERE id = 10
+    note: Session A now holds an exclusive lock on row 10.
+    expect: ok
+
+  - actor: b
+    label: Debit account 20
+    sql: UPDATE accounts SET cents = cents - 100 WHERE id = 20
+    note: Session B holds row 20. No conflict yet — this is the calm before it.
+    expect: ok
+
+  - actor: a
+    label: Credit account 20
+    sql: UPDATE accounts SET cents = cents + 100 WHERE id = 20
+    note: >-
+      Blocks on Session B's lock. Still only a wait, not a deadlock: B could
+      still commit and let A through.
+    expect: blocks
+
+  - actor: b
+    label: Credit account 10, closing the cycle
+    sql: UPDATE accounts SET cents = cents + 100 WHERE id = 10
+    note: >-
+      A waits for B and B waits for A. InnoDB detects the cycle immediately and
+      rolls one transaction back with error 1213. The survivor's blocked
+      statement is granted at the same moment.
+    expect: deadlock
+
+  - actor: a
+    label: Commit the survivor
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Clean up the victim
+    sql: ROLLBACK
+    note: >-
+      The victim was already rolled back by InnoDB. This ROLLBACK is a no-op,
+      which is exactly what application retry logic should be able to issue
+      safely.
+    expect: ok

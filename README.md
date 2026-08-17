@@ -1,0 +1,369 @@
+# Deadlocker
+
+A MySQL lock playground. Write a concurrency scenario in YAML, step through it
+one statement at a time, and watch — live — which locks each session takes,
+who blocks whom, and exactly how a deadlock forms.
+
+Built because "a `SELECT ... FOR UPDATE` on an id that does not exist took a gap
+lock and blocked every insert" is a sentence that is much easier to believe once
+you have seen it happen.
+
+## What it does
+
+- **Spawns its own MySQL** in Docker (8.4 by default) and manages the whole
+  lifecycle. Nothing to install, nothing left behind.
+- **Steps through scenarios** with two or more simulated clients, each on its
+  own dedicated connection, so transaction state persists across steps and
+  statements really do run concurrently.
+- **Shows the locks**, read straight out of `performance_schema.data_locks` and
+  `data_lock_waits` after every step, with each lock mode translated into a
+  sentence — the difference between `X`, `X,GAP`, `X,REC_NOT_GAP` and
+  `X,INSERT_INTENTION` is the whole ballgame and the UI says so.
+- **Draws the wait-for graph** that InnoDB's deadlock detector is looking at:
+  actors as nodes, waits as labelled arrows. When the arrows close a loop it
+  says so loudly — which you can actually watch happen in the
+  detection-disabled scenario, where the cycle sits there for the full timeout.
+- **Decodes the wire protocol.** Every connection is routed through a
+  pass-through MySQL proxy that decodes each packet as it forwards it. You see
+  the actual `COM_QUERY` bytes, the `OK`/`ERR` packets, the `IN_TRANS` status
+  flag flipping, and a hex dump if you want it — filtered per actor and per
+  step.
+- **Streams the container log**, with InnoDB's `LATEST DETECTED DEADLOCK`
+  report pulled out into its own tab (`innodb_print_all_deadlocks` is on).
+- **Checks the scenario's claims.** Each step can declare `expect: blocks` or
+  `expect: deadlock`; the UI marks every step as matching or not. A scenario is
+  a falsifiable statement about MySQL, not a story.
+- **Remembers every run** and will **diff two of them side by side**. Run a
+  scenario, change one line in the playground, run it again, compare: the
+  REPEATABLE READ and READ COMMITTED versions of the gap-lock case differ in
+  exactly one step, and the diff shows you which.
+- **Serves an MCP endpoint** so an external agent can list and author
+  scenarios, start runs, step them, and read the resulting lock state.
+- **Ships an optional assistant** that drives those same tools against any
+  OpenAI-compatible endpoint, so it can check a claim about MySQL by running it
+  rather than asserting it.
+
+## Running it
+
+Requires Go 1.22+ and a running Docker daemon.
+
+```sh
+go run ./cmd/deadlocker
+# open http://127.0.0.1:8899
+```
+
+The first run pulls `mysql:8.4` and waits for it to initialise, which takes a
+minute or so. After that the container is reused, and each run just gets a fresh
+scratch database that is dropped when the run closes.
+
+The scenario library ships inside the binary. On start it is copied into the
+case directory, creating it if necessary; files that already exist are never
+overwritten, so your edits are safe.
+
+Flags:
+
+| flag | default | meaning |
+| --- | --- | --- |
+| `-addr` | `127.0.0.1:8899` | address to serve the UI on |
+| `-cases` | `cases` | directory of scenario YAML files |
+| `-settle` | `400ms` | how long a statement may run before it is reported as blocked |
+| `-prewarm` | — | boot an image at startup instead of on first run, e.g. `mysql:8.4` |
+| `-keep-stale` | `false` | do not reap containers left by a previous session |
+| `-state` | `<cases>/../.deadlocker/state.db` | bbolt file holding the versioned configuration |
+| `-no-seed` | `false` | do not copy the built-in scenarios into the case directory |
+
+Everything is embedded in the binary — templates, CSS, JavaScript. There is no
+build step and no npm.
+
+## Using the UI
+
+**Step** submits the next statement. **Play** runs until the scenario ends or an
+actor blocks. <kbd>Space</kbd> steps, <kbd>↑</kbd>/<kbd>↓</kbd> move between
+steps, <kbd>/</kbd> focuses the scenario filter.
+
+The timeline is one column per actor. A step that does not return within the
+settle window is marked **blocked** and left running — that is the point. Advance
+the *other* actor while the first one waits, and watch what happens. When a
+blocked statement eventually returns, times out, or is picked as a deadlock
+victim, its card updates in place.
+
+A blocked actor cannot accept another statement, because a real connection runs
+one statement at a time. If you hit that, the scenario needs the unblocking step
+to come next.
+
+The dock at the bottom has: the selected step's result or error (with a note on
+what the error actually did to your transaction), the live lock table, the
+decoded packet stream, the container log, and the InnoDB deadlock report.
+
+## Writing a scenario
+
+Scenarios live in `cases/`, one YAML file each, organised into folders that
+become categories. The playground (**New scenario**) is the fast path: edit,
+**Run**, and only **Save** once it earns a place in the library.
+
+```yaml
+name: SELECT FOR UPDATE on a missing row blocks the next insert
+category: Gap locks          # defaults to the folder name
+tags: [gap-lock, uuidv7]
+description: |
+  Prose shown on the scenario page.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ   # READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SERIALIZABLE
+  lock_wait_timeout: 300       # innodb_lock_wait_timeout, per session, seconds
+  deadlock_detect: true        # global; false turns deadlocks into timeouts
+  prepared: false              # true: COM_STMT_PREPARE/EXECUTE and binary result rows
+  vars:                        # extra SET SESSION variables
+    sql_mode: STRICT_ALL_TABLES
+
+schema:
+  - CREATE TABLE bookings (id CHAR(36) PRIMARY KEY, guest VARCHAR(64)) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO bookings VALUES ('...', 'ada')
+
+actors:
+  - id: a
+    name: Request A
+    accent: blue               # blue | amber | violet | teal | rose
+  - id: b
+    name: Request B
+
+steps:
+  - actor: a
+    label: Open a transaction  # defaults to a summary of the SQL
+    sql: BEGIN
+    note: Shown under the step in the timeline.
+    expect: ok                 # ok | blocks | error | deadlock | timeout
+```
+
+`description` is rendered as Markdown on the scenario page: headings, lists,
+`code`, **bold**, links and fenced blocks all work.
+
+**Ordering rule.** A connection runs one statement at a time, so a blocked actor
+cannot accept its next step. Put the statement that releases the lock — usually
+a `COMMIT` on the other actor — before the blocked actor's next step, or the
+scenario wedges itself.
+
+The playground editor highlights YAML (and the SQL inside block scalars) and
+completes keys and values with <kbd>Ctrl</kbd>+<kbd>Space</kbd>, including the
+actor ids the document declares.
+
+`expect` values:
+
+| value | matches |
+| --- | --- |
+| `ok` | completed without error |
+| `blocks` | hit a lock wait, whatever happened afterwards |
+| `error` | any failure, including deadlock and timeout |
+| `deadlock` | errno 1213, chosen as the victim |
+| `timeout` | errno 1205, `innodb_lock_wait_timeout` fired |
+
+Omit `expect` when the outcome genuinely is not deterministic — which victim
+InnoDB picks in a symmetric deadlock, for instance.
+
+`lock_wait_timeout` defaults to 300 seconds because scenarios are stepped
+through by hand and a statement timing out while you read the explanation is the
+wrong lesson. Set it low deliberately when the timeout *is* the lesson.
+
+## The scenario library
+
+**Fundamentals** — record locks on an existing row · shared vs exclusive
+compatibility · why a lock wait timeout leaves the transaction open and holding
+locks.
+
+**Gap locks** — the UUIDv7 case: `SELECT ... FOR UPDATE` on a missing row locks
+the supremum gap and blocks every new time-ordered insert · the same scenario
+under `READ COMMITTED`, where it does not · how narrow a gap lock really is ·
+what a range scan locks (including one record past the range).
+
+**Deadlocks** — the classic AB-BA cycle · check-then-insert, where two
+compatible gap locks turn into a deadlock the moment both sides insert · the
+three-way duplicate key deadlock caused by InnoDB's shared lock on a duplicate ·
+what happens when you disable `innodb_deadlock_detect` (both sides time out,
+which is worse).
+
+**Isolation levels** — `SERIALIZABLE` silently making every plain `SELECT` a
+locking read · MVCC consistent reads never blocking and never being blocked.
+
+**Indexes** — an `UPDATE` with no usable index locking every row it scans · a
+secondary index lookup locking both the index entry and the clustered record ·
+a foreign key making a child insert lock the parent row.
+
+**Wire protocol** — prepared statements moving the result set into the binary
+protocol, with the same locking behaviour and a completely different packet
+trace.
+
+Every scenario in the library is verified against a real server:
+
+```sh
+go run ./cmd/deadlocker &        # in one shell
+hack/verify.py                   # in another
+go run ./hack/mcpprobe           # drives the MCP server as a real client
+```
+
+`verify.py` runs each case end to end and fails if any step's observed behaviour
+stops matching its declared expectation. All 17 currently pass on MySQL 8.4.11.
+
+The pure front-end logic — YAML highlighting and completion — has its own
+browser-free tests, and the Markdown renderer is tested in Go:
+
+```sh
+node hack/yaml_test.js
+go test ./...
+```
+
+### Things worth knowing
+
+- **TLS is off on purpose.** The proxy can only decode the command phase in
+  plaintext. Authentication still uses `caching_sha2_password`; the proxy
+  forwards those packets opaquely and labels them without pretending to
+  interpret RSA-encrypted bytes.
+- **Statements use the text protocol.** `interpolateParams` is on, so `args`
+  are interpolated client-side and every statement arrives as a readable
+  `COM_QUERY` rather than a binary `COM_STMT_EXECUTE`.
+- **Setup and introspection bypass the proxy** on a separate admin connection,
+  so they never pollute the packet timeline.
+- **`deadlock_detect` is a global.** A scenario that sets it affects the shared
+  container for the duration of the run; it is restored on close.
+- **Teardown kills blocked connections** with `KILL CONNECTION` before closing
+  them — a connection parked on a lock wait will not respond to a polite close.
+
+## MCP
+
+Deadlocker serves MCP over streamable HTTP at `/mcp`. External clients get the
+same operations the built-in assistant uses.
+
+```sh
+claude mcp add --transport http deadlocker http://127.0.0.1:8899/mcp
+```
+
+**Tools** — `list_scenarios`, `get_scenario`, `validate_scenario`,
+`create_scenario`, `update_scenario`, `start_run`, `step_run`, `run_all`,
+`get_run`, `get_locks`, `close_run`, `list_history`, `compare_runs`.
+
+**Resources** — `deadlocker://docs/format` (the scenario format, which an
+authoring agent should read first), `deadlocker://scenarios`,
+`deadlocker://history`, plus `deadlocker://scenario/{id}` and
+`deadlocker://run/{id}` templates.
+
+The design point is `step_run`: it returns each step's outcome **together with
+the lock state it produced** — lock modes with plain-language explanations, wait
+edges, and whether the wait graph contains a cycle. That is what lets an agent
+reason about why something blocked instead of guessing.
+
+`validate_scenario` also lints for the ordering mistake that produces a file
+which parses but wedges forever:
+
+```
+step 5 gives "b" another statement while its step 4 is expected to block;
+a connection runs one statement at a time, so put the releasing COMMIT
+or ROLLBACK first
+```
+
+Everything an MCP client does appears live in any open browser tab, attributed
+to its source.
+
+## The built-in assistant
+
+Optional, and hidden entirely until configured — Deadlocker is fully usable
+without it. Configure it in **Settings**: an OpenAI-compatible base URL (Ollama,
+LM Studio, llama.cpp, vLLM, or a remote gateway), an optional API key, and a
+model chosen from a dropdown populated by querying the endpoint.
+
+Two separate surfaces, because they are different jobs:
+
+- **Discuss** — a docked bubble on a scenario or run page. Ask why something
+  blocks, or propose a change and have it run the variant and report what
+  actually happened. Closes freely; Escape dismisses it.
+- **Build** — opened from **Build with the assistant** in the sidebar, or from
+  **Edit with assistant** on a scenario. A modal sheet with the conversation on
+  one side and the scenario taking shape on the other: a step list that fills in as it is drafted, with
+  the YAML source as a toggle. A test run stays inside the sheet and drives that
+  same step list live, with a stopwatch, rather than throwing you into another
+  tab. The assistant is instructed to draft, run, and correct before claiming
+  anything works. This one is deliberately hard to close by accident: Escape is
+  swallowed, the backdrop is inert, and closing with unsaved work asks first.
+
+The conversation is rendered as a sequence of blocks in the order things
+happened, not one bubble per turn. Reasoning streams into a windowed view about
+ten lines tall and collapses to "Thought for 8s" when it closes, expandable
+again. Tool calls appear the moment they start, named for what they are doing
+("Stepping the run · a7qfuxsp") with a running timer, and resolve to an outcome
+("1 step · 1 blocked"); the raw arguments and result are one click away. Prose
+is markdown, and a new bubble begins after each tool call or thought so text
+either side of an interruption does not merge. While a reply is pending there is
+a "Processing" bubble with its own timer, and anything you type meanwhile is
+queued and sent when the turn ends.
+
+Both drive `internal/agentapi`, the same layer behind MCP, so the two can never
+drift apart.
+
+Configuration is stored in bbolt and versioned. Every save appends a revision;
+restoring copies an old one forward rather than rewriting history, so a base URL
+that used to work is always one click away.
+
+## Run history and comparison
+
+Every run is recorded — configuration, per-step outcomes, verdicts, the final
+lock snapshot and any deadlock report. Records outlive the run itself, so you
+can close a run and still compare it later.
+
+The **History** tab on a scenario lists its runs; tick two and compare. The
+comparison aligns steps by number and reports only what actually changed, with
+timings compared in coarse bands so millisecond jitter is not mistaken for a
+behavioural difference.
+
+History is in-memory and capped at 200 runs. Restarting the server clears it.
+
+## How it works
+
+```
+browser ──SSE──► web (html/template + vanilla JS, embedded)
+                  │
+                  ▼
+               engine ──── one dedicated *sql.Conn per actor
+                  │    ├── lock snapshots from performance_schema
+                  │    └── run history + diffing
+                  │
+                  ▼
+           wire proxy (one listener per actor, decodes as it forwards)
+                  │
+                  ▼
+          MySQL container (managed over the Docker socket)
+```
+
+- `internal/dockerctl` — small Docker Engine API client over the unix socket.
+  The official SDK's dependency tree is not worth it for pull/create/start/logs.
+- `internal/mysqlbox` — container lifecycle. One long-lived container per image,
+  reused across runs; MySQL's data directory init is far too slow to pay per run.
+- `internal/casedef` — the YAML format and the on-disk library.
+- `internal/markdown` — the small Markdown subset scenario descriptions use.
+- `internal/agentapi` — the typed operation layer plus the activity hub. The one
+  place an ability is added.
+- `internal/mcpserver` — MCP tools and resources over streamable HTTP.
+- `internal/chat` — the assistant, on `charm.land/fantasy`.
+- `internal/store` — bbolt-backed versioned configuration.
+- `internal/wire` — MySQL packet framing and a decoding pass-through proxy,
+  text and binary result rows.
+- `internal/engine` — run orchestration, step-through control, lock
+  introspection, the event bus, run history and diffing.
+- `internal/web` — server-rendered pages plus an SSE stream.
+
+Direct dependencies: `go-sql-driver/mysql`, `gopkg.in/yaml.v3`, `go.etcd.io/bbolt`,
+`github.com/modelcontextprotocol/go-sdk` and `charm.land/fantasy`. The last two
+are only reachable through the MCP endpoint and the assistant; the core tool
+does not depend on them at runtime.
+
+## Ideas not built yet
+
+- MariaDB images alongside MySQL for comparing lock semantics. MariaDB has no
+  `performance_schema.data_locks`; it still ships the older
+  `information_schema.INNODB_LOCKS` and `INNODB_LOCK_WAITS`, so the
+  introspection layer would need a second implementation behind an interface.
+- Persisting run history across restarts. Configuration is already in bbolt, so
+  the storage is there; run records just are not written to it yet.
+- A timeline scrubber to replay lock snapshots step by step after the fact.
+- MCP prompts, so a client can offer "explain this scenario" as a slash command
+  rather than the user having to phrase it.

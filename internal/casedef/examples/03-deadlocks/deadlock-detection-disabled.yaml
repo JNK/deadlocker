@@ -1,0 +1,104 @@
+name: With detection off, a deadlock becomes a timeout
+category: Deadlocks
+tags: [deadlock, innodb_deadlock_detect, lock-wait-timeout, error-1205]
+description: |
+  Exactly the AB-BA deadlock, with innodb_deadlock_detect turned off.
+
+  Maintaining the wait-for graph costs something, and on workloads with very
+  high concurrency on a small number of hot rows that cost can dominate. The
+  documented alternative is to disable detection and rely on
+  innodb_lock_wait_timeout instead.
+
+  The trade is visible here, and it is worse than it first looks. Instead of
+  error 1213 arriving in microseconds and freeing one side immediately, BOTH
+  sessions time out with error 1205. Session A gives up first, but because a
+  timeout rolls back only the statement, Session A keeps every lock it already
+  held — so Session B is still blocked and times out too. A deadlock that
+  detection would have resolved instantly, at the cost of one transaction, now
+  costs two transactions and ten seconds of held connections.
+
+  Retry logic written for 1213 will quietly do the wrong thing here: after 1205
+  the transaction is still open and still holding locks, so a naive "retry the
+  statement" makes the pile-up worse.
+
+  This scenario changes a GLOBAL server variable. It is set back to ON when the
+  run is closed.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 5
+  deadlock_detect: false
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000), (20, 'grace', 7000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Debit account 10
+    sql: UPDATE accounts SET cents = cents - 100 WHERE id = 10
+    expect: ok
+
+  - actor: b
+    label: Debit account 20
+    sql: UPDATE accounts SET cents = cents - 100 WHERE id = 20
+    expect: ok
+
+  - actor: a
+    label: Credit account 20
+    sql: UPDATE accounts SET cents = cents + 100 WHERE id = 20
+    note: Blocks, as before.
+    expect: blocks
+
+  - actor: b
+    label: Credit account 10, closing the cycle
+    sql: UPDATE accounts SET cents = cents + 100 WHERE id = 10
+    note: >-
+      The cycle is now closed and nobody is watching for it. Both statements
+      wait out the full 5 seconds and both fail with error 1205. Compare with
+      the AB-BA scenario, where InnoDB rolled one transaction back at once and
+      let the other proceed.
+    expect: timeout
+
+  - actor: b
+    label: Roll back the session that timed out
+    sql: ROLLBACK
+    note: >-
+      Session B has to go first. Error 1205 rolled back only its statement, so
+      it still holds the lock on account 20 that Session A is waiting for.
+      Session A stays stuck until this releases it — which is precisely the
+      difference from a real deadlock, where InnoDB frees the victim's locks
+      for you.
+    expect: ok
+
+  - actor: a
+    label: Roll back
+    sql: ROLLBACK
+    expect: ok

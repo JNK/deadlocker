@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body class="body-run">
+<div class="shell">
+  {{template "sidebar" .}}
+
+  <main class="main run-main" id="run-root" data-run="{{.Run.ID}}">
+    <header class="run-header">
+      <div class="run-title">
+        <div class="crumb"><a href="/">Scenarios</a> <span>/</span> <a href="/case/{{.Run.CaseID}}">{{.Run.CaseName}}</a></div>
+        <h1>{{.Run.CaseName}}</h1>
+        <div class="badge-row">
+          <span class="chip chip-status" data-run-status>{{.Run.Status}}</span>
+          <span class="chip">{{.Run.Image}}</span>
+          {{if .Run.Isolation}}<span class="chip">{{.Run.Isolation}}</span>{{end}}
+          <span class="chip">lock wait {{.Run.LockWaitTimeout}}s</span>
+          <span class="chip mono" title="Scratch database, dropped when the run closes">{{.Run.Database}}</span>
+          <span class="chip mono" title="Host address of the MySQL container">{{.Run.Addr}}</span>
+        </div>
+      </div>
+
+      <div class="run-controls">
+        <div class="progress" title="Steps submitted">
+          <span data-cursor>{{.Run.Cursor}}</span><span class="progress-sep">/</span><span>{{.Run.Total}}</span>
+        </div>
+        <button class="btn btn-primary" id="btn-step" type="button">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h2v16H5z" fill="currentColor" stroke="none"/><path d="m10 5 9 7-9 7z" fill="currentColor" stroke="none"/></svg>
+          Step
+        </button>
+        <button class="btn" id="btn-play" type="button" title="Advance until the scenario ends or an actor blocks">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Play
+        </button>
+        <button class="btn btn-ghost" id="btn-snapshot" type="button" title="Re-read performance_schema.data_locks now">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+          Locks
+        </button>
+        <div class="menu">
+          <button class="btn btn-ghost btn-icon" id="btn-more" type="button" aria-label="More actions">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          </button>
+          <div class="menu-list" id="more-menu" hidden>
+            <form method="post" action="/run"><input type="hidden" name="case_id" value="{{.Run.CaseID}}">
+              <button type="submit" class="menu-item">Restart from the top</button>
+            </form>
+            <a class="menu-item" href="/case/{{.Run.CaseID}}#case=history">Run history for this scenario</a>
+            <a class="menu-item" href="/compare">Compare two runs</a>
+            <a class="menu-item" href="/run/{{.Run.ID}}/export">Export run as JSON</a>
+            <a class="menu-item" href="/playground?from={{.Run.CaseID}}">Edit this scenario</a>
+            <button class="menu-item menu-item-danger" id="btn-close-run" type="button">Close run &amp; drop database</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <div class="run-split">
+      <section class="lanes-wrap" id="lanes-wrap">
+        <div class="lanes" style="--lane-count: {{len .Run.Actors}}">
+          <div class="lane-head-row">
+            <div class="lane-gutter lane-gutter-head">#</div>
+            {{range .Run.Actors}}
+            <div class="lane-head accent-{{.Accent}}" data-actor-head="{{.ID}}">
+              <span class="actor-dot"></span>
+              <span class="lane-head-name">{{.Name}}</span>
+              <span class="lane-head-conn mono" title="MySQL CONNECTION_ID() — proxy on {{.ProxyAddr}}">#{{.ConnID}}</span>
+              <span class="badge-trx" data-actor-trx="{{.ID}}" hidden title="This session has an open transaction">TRX</span>
+            </div>
+            {{end}}
+          </div>
+
+          <div class="lane-body">
+            {{range $i, $step := .Steps}}
+            <div class="lane-row" data-step-row="{{$step.Index}}">
+              <div class="lane-gutter">{{$step.Index}}</div>
+              {{range $a := $.Run.Actors}}
+              <div class="lane-cell accent-{{$a.Accent}}">
+                {{if eq $a.ID $step.Actor}}
+                <button class="step-card accent-{{$step.Accent}} status-{{$step.Status}}"
+                        data-step-card="{{$step.Index}}" type="button">
+                  <div class="step-card-top">
+                    <span class="step-status" data-field="status">{{$step.Status}}</span>
+                    <span class="step-label">{{$step.Label}}</span>
+                    {{template "expect-badge" $step.Expect}}
+                  </div>
+                  <code class="step-sql">{{shortSQL $step.SQL}}</code>
+                  {{if $step.Note}}<p class="step-note">{{$step.Note}}</p>{{end}}
+                  <div class="step-foot" data-field="foot"></div>
+                </button>
+                {{else}}
+                <div class="lane-spacer" aria-hidden="true"></div>
+                {{end}}
+              </div>
+              {{end}}
+            </div>
+            {{end}}
+          </div>
+        </div>
+        <div class="lanes-end" data-lanes-end>End of scenario</div>
+      </section>
+
+      <aside class="dock" id="dock">
+        <div class="dock-resize" id="dock-resize" role="separator" aria-orientation="horizontal"
+             title="Drag to resize, double-click to reset"></div>
+        <div class="dock-tabs" role="tablist">
+          <button class="dock-tab is-active" data-tab="step" type="button">Step</button>
+          <button class="dock-tab" data-tab="locks" type="button">Locks <span class="tab-count" data-count="locks"></span></button>
+          <button class="dock-tab" data-tab="wire" type="button">Wire <span class="tab-count" data-count="wire"></span></button>
+          <button class="dock-tab" data-tab="docker" type="button">Container log <span class="tab-count" data-count="docker"></span></button>
+          <button class="dock-tab" data-tab="deadlock" type="button">Deadlock report <span class="tab-dot" data-dot="deadlock" hidden></span></button>
+          <button class="dock-tab" data-tab="activity" type="button">Activity</button>
+          <div class="dock-tabs-spacer"></div>
+          <span class="conn-state" id="conn-state" title="Live event stream">connecting…</span>
+        </div>
+
+        <div class="dock-panels">
+          <div class="dock-panel is-active" data-panel="step">
+            <div class="dock-empty" id="step-empty">Select a step, or press <kbd>Space</kbd> to run the next one.</div>
+            <div id="step-detail" hidden></div>
+          </div>
+
+          <div class="dock-panel" data-panel="locks">
+            <div class="dock-toolbar">
+              <span class="muted" id="locks-time">no snapshot yet</span>
+              <div class="dock-toolbar-spacer"></div>
+              <label class="switch"><input type="checkbox" id="locks-granted" checked> show granted locks</label>
+            </div>
+            <div id="wait-graph" class="wait-graph"></div>
+            <div id="locks-waits"></div>
+            <div id="locks-table"></div>
+          </div>
+
+          <div class="dock-panel" data-panel="wire">
+            <div class="dock-toolbar">
+              <select id="wire-actor"><option value="">all actors</option>
+                {{range .Run.Actors}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+              </select>
+              <select id="wire-step"><option value="">all steps</option>
+                <option value="0">session setup</option>
+                {{range .Steps}}<option value="{{.Index}}">step {{.Index}} · {{.Label}}</option>{{end}}
+              </select>
+              <label class="switch"><input type="checkbox" id="wire-hex"> show bytes</label>
+              <div class="dock-toolbar-spacer"></div>
+              <button class="btn btn-ghost btn-sm" id="wire-clear" type="button">Clear view</button>
+            </div>
+            <div id="wire-list" class="wire-list"></div>
+          </div>
+
+          <div class="dock-panel" data-panel="docker">
+            <div class="dock-toolbar">
+              <label class="switch"><input type="checkbox" id="docker-deadlock-only"> deadlock lines only</label>
+              <div class="dock-toolbar-spacer"></div>
+              <label class="switch"><input type="checkbox" id="docker-follow" checked> follow</label>
+            </div>
+            <div id="docker-log" class="log-view"></div>
+          </div>
+
+          <div class="dock-panel" data-panel="deadlock">
+            <div id="deadlock-report" class="log-view">
+              <div class="dock-empty">No deadlock has been detected in this run yet. InnoDB keeps only the most recent report per server.</div>
+            </div>
+          </div>
+
+          <div class="dock-panel" data-panel="activity">
+            <div id="activity-log" class="log-view"></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+{{if .ChatReady}}
+<div data-discuss data-scenario="{{.Run.CaseID}}" data-run="{{.Run.ID}}" hidden></div>
+{{template "assistant-bubble" .}}
+{{end}}
+
+<script id="run-bootstrap" type="application/json">{{json .Run}}</script>
+<script id="steps-bootstrap" type="application/json">{{json .Steps}}</script>
+<script>window.DL_SETTLE_MS = {{.Settle}};</script>
+<script src="/static/app.js"></script>
+<script src="/static/activity.js"></script>
+<script src="/static/run.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

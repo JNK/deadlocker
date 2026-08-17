@@ -1,0 +1,106 @@
+name: A secondary index lookup locks two indexes
+category: Indexes
+tags: [secondary-index, clustered-index, next-key-lock]
+description: |
+  When a locking read finds rows through a secondary index, InnoDB locks the
+  secondary index entries AND the clustered index records they point to. It has
+  to: the row itself lives in the clustered index, and another session could
+  reach it directly by primary key.
+
+  So a statement that never mentions the primary key ends up holding primary key
+  locks, and a statement that only uses the primary key can be blocked by it.
+  Look at the Locks tab after step 2 — locks on both `idx_owner` and `PRIMARY`.
+
+  There is a second effect here worth noticing. Because `idx_owner` is not
+  unique, the lookup takes next-key locks rather than plain record locks, so it
+  also locks the gap around the matching entries. Session C's insert of another
+  'ada' row blocks even though it is a new row, because it would land inside
+  that gap.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id),
+      KEY idx_owner (owner)
+    ) ENGINE=InnoDB
+
+seed:
+  - |
+    INSERT INTO accounts (id, owner, cents) VALUES
+      (10, 'ada', 5000), (20, 'grace', 7000), (30, 'katherine', 9000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+  - id: c
+    name: Session C
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock ada's rows through the secondary index
+    sql: SELECT * FROM accounts WHERE owner = 'ada' FOR UPDATE
+    note: >-
+      One row returned. The Locks tab shows entries under idx_owner and under
+      PRIMARY — the index entry and the row it points at.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: c
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Update the same row by primary key
+    sql: UPDATE accounts SET cents = cents + 1 WHERE id = 10
+    note: >-
+      Blocks. This statement never mentions `owner`, but it needs the clustered
+      index record that Session A locked on its way through idx_owner.
+    expect: blocks
+
+  - actor: c
+    label: Insert another row for ada
+    sql: INSERT INTO accounts (id, owner, cents) VALUES (11, 'ada', 100)
+    note: >-
+      Also blocks, for a different reason: idx_owner is not unique, so Session A
+      took next-key locks covering the gap around 'ada', and this new index entry
+      would land in it.
+    expect: blocks
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    note: Both waiting statements are granted.
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: c
+    label: Commit
+    sql: COMMIT
+    expect: ok

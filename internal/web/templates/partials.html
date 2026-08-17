@@ -1,0 +1,246 @@
+{{define "head"}}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Deadlocker</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script>
+  // Applied before first paint so a dark-mode reload never flashes white.
+  (function () {
+    try {
+      var t = localStorage.getItem('dl-theme');
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  })();
+</script>
+{{end}}
+
+{{define "sidebar"}}
+<aside class="sidebar">
+  <a class="brand" href="/">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M7 4v6M7 14v6M17 4v6M17 14v6"/>
+        <circle cx="7" cy="12" r="2"/><circle cx="17" cy="12" r="2"/>
+      </svg>
+    </span>
+    <span class="brand-text">
+      <strong>Deadlocker</strong>
+      <small>MySQL lock playground</small>
+    </span>
+  </a>
+
+  <div class="sidebar-actions">
+    <a class="btn btn-primary btn-block" href="/playground">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      New scenario
+    </a>
+    {{if .ChatReady}}
+    <button class="btn btn-block btn-assistant" type="button" data-builder>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M18 15.5 18.8 17.4 20.7 18.2 18.8 19 18 20.9 17.2 19 15.3 18.2 17.2 17.4 18 15.5z"/></svg>
+      Build with the assistant
+    </button>
+    {{end}}
+  </div>
+
+  <div class="sidebar-search">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" id="case-filter" placeholder="Filter scenarios" autocomplete="off" spellcheck="false">
+  </div>
+
+  <nav class="sidebar-nav" id="sidebar-nav">
+    {{range .Categories}}
+    <div class="nav-group" data-group>
+      <div class="nav-group-title">{{.Name}}</div>
+      {{range .Cases}}
+      <a class="nav-item{{if eq .ID $.ActiveCase}} is-active{{end}}" data-case
+         href="/case/{{.ID}}" data-name="{{.Name}} {{join .Tags " "}}">
+        <span class="nav-item-name">{{.Name}}</span>
+        <span class="nav-item-meta">{{len .Actors}}&#8239;actors · {{len .Steps}}&#8239;steps</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+    {{if not .Categories}}
+    <p class="sidebar-empty">No scenarios found in the case folder yet.</p>
+    {{end}}
+  </nav>
+
+  {{if .Runs}}
+  <div class="sidebar-runs">
+    <div class="nav-group-title">Live runs</div>
+    {{range .Runs}}
+    <a class="run-chip" href="/run/{{.ID}}">
+      <span class="dot status-{{.Status}}"></span>
+      <span class="run-chip-name">{{.CaseName}}</span>
+      <span class="run-chip-meta">{{.Cursor}}/{{.Total}}</span>
+    </a>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if .Broken}}
+  <div class="sidebar-broken">
+    <div class="nav-group-title">Will not parse</div>
+    {{range $path, $err := .Broken}}
+    <div class="broken-item" title="{{$err}}">
+      <strong>{{$path}}</strong>
+      <span>{{$err}}</span>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <!-- Bottom actions are icon-and-label items spread across the full width,
+       so the sidebar ends with a balanced row rather than stacked buttons. -->
+  <div class="sidebar-foot">
+    <a class="foot-item" href="/compare" title="Compare two runs side by side">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v18M5 8h4M5 16h4M15 8h4M15 16h4"/></svg>
+      <span>Compare</span>
+    </a>
+    <a class="foot-item" href="/settings" title="Settings">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.4 7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.3 2.9z"/></svg>
+      <span>Settings</span>
+    </a>
+    <button class="foot-item" id="theme-toggle" type="button" title="Toggle light and dark">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      <span>Theme</span>
+    </button>
+  </div>
+</aside>
+{{end}}
+
+{{define "expect-badge"}}
+{{if .}}<span class="chip chip-expect" title="Expected outcome declared in the scenario">expects {{.}}</span>{{end}}
+{{end}}
+
+{{define "builder-sheet"}}
+<!-- The scenario builder: conversation on the left, the scenario taking shape
+     on the right. Deliberately hard to close by accident. -->
+<div class="sheet-backdrop" id="builder-backdrop" hidden></div>
+<section class="sheet" id="builder-sheet" role="dialog" aria-modal="true"
+         aria-labelledby="builder-title" hidden>
+  <header class="sheet-head">
+    <div class="sheet-title">
+      <h2 id="builder-title">Scenario builder</h2>
+      <span class="chip mono" id="builder-model"></span>
+      <span class="chip" id="builder-scenario" hidden></span>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost btn-sm" id="builder-run" type="button">Test run</button>
+      <button class="btn btn-sm" id="builder-save" type="button">Save to library</button>
+      <button class="btn btn-ghost btn-icon" id="builder-close" type="button" aria-label="Close the builder">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="sheet-body">
+    <div class="sheet-chat">
+      <div class="chat-log" id="builder-log">
+        <div class="chat-empty" id="builder-empty">
+          <h3>What should this scenario show?</h3>
+          <p>
+            Describe the locking behaviour you want to demonstrate. The assistant drafts a
+            scenario, runs it against MySQL, and fixes it if it does not behave as claimed.
+          </p>
+          <div class="chat-suggestions" id="builder-suggestions"></div>
+        </div>
+      </div>
+      <div class="chat-compose">
+        <textarea id="builder-input" rows="2" spellcheck="false"
+                  placeholder="e.g. two transactions deadlocking on the same unique key…"></textarea>
+        <div class="chat-compose-foot">
+          <span class="muted" id="builder-status">Enter to send · Shift+Enter for a newline</span>
+          <button class="btn btn-primary btn-sm" id="builder-send" type="button">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="sheet-side">
+      <div class="side-head">
+        <div class="view-toggle" id="builder-view-toggle">
+          <button class="view-btn is-active" data-view="steps" type="button">Steps</button>
+          <button class="view-btn" data-view="source" type="button">Source</button>
+        </div>
+        <span class="draft-state" id="builder-draft-state">in sync</span>
+        <button class="btn btn-ghost btn-sm" id="builder-draft-apply" type="button"
+                title="Share your edits with the assistant">Apply edits</button>
+      </div>
+
+      <!-- Live run controls appear once a test run exists, so stepping happens
+           here rather than in another tab. -->
+      <div class="run-bar" id="builder-run-bar" hidden>
+        <span class="run-bar-status" id="builder-run-status">preparing</span>
+        <span class="run-bar-progress mono" id="builder-run-progress">0/0</span>
+        <span class="run-bar-clock mono" id="builder-run-clock" title="Elapsed since the run started">0s</span>
+        <div class="run-bar-actions">
+          <button class="btn btn-sm" id="builder-run-step" type="button">Step</button>
+          <button class="btn btn-ghost btn-sm" id="builder-run-play" type="button">Play</button>
+          <a class="btn btn-ghost btn-sm" id="builder-run-open" href="#" target="_blank"
+             title="Open the full run view in a new tab">Full view</a>
+          <button class="btn btn-ghost btn-sm" id="builder-run-close" type="button">Close run</button>
+        </div>
+      </div>
+
+      <div class="side-pane" id="builder-steps-pane">
+        <div class="steps-view" id="builder-steps"></div>
+      </div>
+
+      <div class="side-pane side-pane-source" id="builder-source-pane" hidden>
+        <textarea id="builder-draft" spellcheck="false" autocomplete="off" wrap="off"></textarea>
+      </div>
+    </aside>
+  </div>
+</section>
+{{end}}
+
+{{define "assistant-bubble"}}
+<!-- The discuss flow: a small docked panel, not a modal. Nothing here is
+     destructive to lose, so it closes freely. -->
+<button class="bubble-launcher" id="bubble-launcher" type="button" hidden
+        title="Ask the assistant about this scenario">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.9-.9L3 20.5l1.5-4.4A8.4 8.4 0 0 1 3.6 11.5a8.4 8.4 0 0 1 8.4-8.4 8.4 8.4 0 0 1 9 8.4z"/>
+  </svg>
+  <span>Ask</span>
+</button>
+
+<section class="bubble" id="bubble" hidden role="complementary" aria-labelledby="bubble-title">
+  <header class="bubble-head">
+    <span class="bubble-dot"></span>
+    <h2 id="bubble-title">Assistant</h2>
+    <span class="chip mono" id="bubble-model"></span>
+    <div class="bubble-actions">
+      <button class="btn btn-ghost btn-icon btn-sm" id="bubble-min" type="button" aria-label="Minimise">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 12h12"/></svg>
+      </button>
+    </div>
+  </header>
+  <div class="chat-log" id="bubble-log">
+    <div class="chat-empty" id="bubble-empty">
+      <p id="bubble-hint">
+        Ask about this scenario, or propose a change — the assistant can run it and report
+        what actually happened.
+      </p>
+      <div class="chat-suggestions" id="bubble-suggestions"></div>
+    </div>
+  </div>
+  <div class="chat-compose">
+    <textarea id="bubble-input" rows="2" spellcheck="false" placeholder="Ask about the locks…"></textarea>
+    <div class="chat-compose-foot">
+      <span class="muted" id="bubble-status">Enter to send</span>
+      <button class="btn btn-primary btn-sm" id="bubble-send" type="button">Send</button>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{define "assistant-mount"}}
+{{if .ChatReady}}
+{{template "builder-sheet" .}}
+<script src="/static/md.js"></script>
+<script src="/static/chatcore.js"></script>
+<script src="/static/assistant.js"></script>
+{{end}}
+{{end}}

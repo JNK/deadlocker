@@ -1,0 +1,92 @@
+name: A lock wait timeout leaves the transaction open
+category: Fundamentals
+tags: [lock-wait-timeout, error-1205, rollback-on-timeout]
+description: |
+  innodb_lock_wait_timeout is set to 4 seconds here, so the blocked statement
+  gives up quickly with error 1205.
+
+  The part people get wrong: a lock wait timeout rolls back only the STATEMENT,
+  not the transaction. By default innodb_rollback_on_timeout is OFF, so after
+  the 1205 the session is still inside its transaction and still holds every
+  lock it had already taken. If the application catches the error and carries
+  on, it carries on holding locks.
+
+  Contrast with a deadlock (error 1213), which always rolls back the entire
+  victim transaction. Two error codes that look similar in a log, with opposite
+  consequences for the state your application is left in.
+
+  Step 6 proves the transaction survived: it runs a normal statement on the same
+  connection, which would fail if the transaction had been rolled back.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 4
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000), (20, 'grace', 7000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock account 10
+    sql: SELECT * FROM accounts WHERE id = 10 FOR UPDATE
+    expect: ok
+
+  - actor: b
+    label: Open a transaction and take a lock of its own
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Lock account 20
+    sql: SELECT * FROM accounts WHERE id = 20 FOR UPDATE
+    note: Session B now holds a lock. Remember this when the timeout hits.
+    expect: ok
+
+  - actor: b
+    label: Wait for account 10, and give up after 4 seconds
+    sql: SELECT * FROM accounts WHERE id = 10 FOR UPDATE
+    note: >-
+      Marked blocked first, then fails with error 1205. The step keeps both
+      facts: it blocked, and it ended in a timeout.
+    expect: timeout
+
+  - actor: b
+    label: Is the transaction still alive?
+    sql: SELECT id, owner, cents FROM accounts WHERE id = 20
+    note: >-
+      It runs, and the Locks tab still shows Session B's X lock on account 20 as
+      GRANTED. The timeout discarded one statement and nothing else.
+    expect: ok
+
+  - actor: b
+    label: Roll back for real
+    sql: ROLLBACK
+    expect: ok
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok

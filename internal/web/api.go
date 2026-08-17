@@ -1,0 +1,409 @@
+package web
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/jnk/deadlocker/internal/agentapi"
+	"github.com/jnk/deadlocker/internal/casedef"
+	"github.com/jnk/deadlocker/internal/chat"
+)
+
+// ------------------------------------------------------------ activity feed
+
+// handleActivity streams the global activity feed. It is what makes a change
+// performed by an MCP client or by the assistant show up immediately in an
+// open browser tab.
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	since := 0
+	if v := r.Header.Get("Last-Event-ID"); v != "" {
+		fmt.Sscanf(v, "%d", &since)
+	} else if v := r.URL.Query().Get("since"); v != "" {
+		fmt.Sscanf(v, "%d", &since)
+	}
+
+	ch, backlog, cancel := s.api.Hub().Subscribe(since)
+	defer cancel()
+
+	send := func(a agentapi.Activity) bool {
+		payload, err := json.Marshal(a)
+		if err != nil {
+			return true
+		}
+		if _, err := fmt.Fprintf(w, "id: %d\nevent: activity\ndata: %s\n\n", a.Seq, payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	for _, a := range backlog {
+		if !send(a) {
+			return
+		}
+	}
+	fmt.Fprint(w, "event: ready\ndata: {}\n\n")
+	flusher.Flush()
+
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case a, open := <-ch:
+			if !open {
+				return
+			}
+			if !send(a) {
+				return
+			}
+		case <-ticker.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		case <-s.quit:
+			return
+		}
+	}
+}
+
+// ---------------------------------------------------------------- settings
+
+func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
+	pd := s.base("Settings", "settings")
+	cfg, version, err := s.store.Current()
+	if err != nil {
+		pd.Error = err.Error()
+	}
+	pd.Config = &cfg
+	pd.ConfigVersion = version
+	pd.HasAPIKey = cfg.LLM.APIKey != ""
+	// The key itself never reaches the browser.
+	pd.Config.LLM.APIKey = ""
+	if versions, err := s.store.Versions(25); err == nil {
+		for _, v := range versions {
+			pd.ConfigVersions = append(pd.ConfigVersions, v.Redacted())
+		}
+	}
+	pd.StorePath = s.store.Path()
+	pd.MCPURL = "http://" + r.Host + "/mcp"
+	s.render(w, "settings.html", pd)
+}
+
+type settingsPayload struct {
+	Enabled     bool   `json:"enabled"`
+	BaseURL     string `json:"base_url"`
+	APIKey      string `json:"api_key"`
+	ClearAPIKey bool   `json:"clear_api_key"`
+	Model       string `json:"model"`
+	// Sampling settings are pointers: absent means "leave it to the model
+	// server" rather than "use zero".
+	Temperature *float64 `json:"temperature"`
+	MaxTokens   *int     `json:"max_tokens"`
+	MaxSteps    *int     `json:"max_steps"`
+	Note        string   `json:"note"`
+}
+
+func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
+	var req settingsPayload
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	current, _, err := s.store.Current()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	next := current
+	next.LLM.Enabled = req.Enabled
+	next.LLM.BaseURL = req.BaseURL
+	next.LLM.Model = req.Model
+	next.LLM.Temperature = req.Temperature
+	next.LLM.MaxTokens = req.MaxTokens
+	next.LLM.MaxSteps = req.MaxSteps
+
+	// The browser never receives the stored key, so an empty field means
+	// "leave it alone". Clearing is an explicit action.
+	switch {
+	case req.ClearAPIKey:
+		next.LLM.APIKey = ""
+	case req.APIKey != "":
+		next.LLM.APIKey = req.APIKey
+	}
+
+	saved, err := s.store.Save(next, req.Note)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.api.Hub().Publish(agentapi.Activity{
+		Source: agentapi.SourceUI, Kind: agentapi.KindConfigSaved,
+		Summary: fmt.Sprintf("saved configuration version %d", saved.Version),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "version": saved.Version, "ready": next.Ready(),
+	})
+}
+
+func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Version uint64 `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	saved, err := s.store.Restore(req.Version)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": saved.Version})
+}
+
+// handleModels proxies a /models request so the browser can populate the model
+// dropdown without needing CORS on the model server.
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BaseURL string `json:"base_url"`
+		APIKey  string `json:"api_key"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// An empty key in the request means "use the stored one".
+	if req.APIKey == "" {
+		if cfg, _, err := s.store.Current(); err == nil {
+			req.APIKey = cfg.LLM.APIKey
+		}
+	}
+	models, err := chat.FetchModels(r.Context(), req.BaseURL, req.APIKey)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": models})
+}
+
+// -------------------------------------------------------------------- chat
+
+func (s *Server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
+	cfg, _, err := s.store.Current()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ready": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ready":    cfg.Ready(),
+		"enabled":  cfg.LLM.Enabled,
+		"model":    cfg.LLM.Model,
+		"base_url": cfg.LLM.BaseURL,
+	})
+}
+
+func (s *Server) handleChatNew(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode       string `json:"mode"`
+		ScenarioID string `json:"scenario_id"`
+		RunID      string `json:"run_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	mode := chat.ModeDiscuss
+	if req.Mode == string(chat.ModeBuild) {
+		mode = chat.ModeBuild
+	}
+
+	draft := ""
+	if mode == chat.ModeBuild {
+		// Editing an existing scenario starts from its current source;
+		// authoring from scratch starts from a runnable skeleton.
+		if req.ScenarioID != "" {
+			if c, ok := s.lib.Get(req.ScenarioID); ok {
+				draft = c.Source
+			}
+		}
+		draft = chat.EnsureValidDraft(draft)
+	}
+
+	id, err := newID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	sess := s.chat.NewSession(id, mode, req.ScenarioID, req.RunID, draft)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "session": sess.ID, "mode": string(sess.Mode),
+		"draft": sess.DraftYAML(), "scenario": chat.ParseDraft(sess.DraftYAML()),
+	})
+}
+
+// handleChatSend streams one assistant turn back as server-sent events on the
+// POST response, so text, tool calls and draft updates all arrive as they
+// happen rather than in one lump at the end.
+func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.chat.Session(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown chat session"})
+		return
+	}
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	var mu sync.Mutex
+	emit := func(ev chat.Event) {
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, payload)
+		flusher.Flush()
+	}
+
+	// A generation can outlive the request only if the client goes away; give
+	// it a hard ceiling either way.
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	defer cancel()
+
+	if err := s.chat.Send(ctx, sess, req.Message, emit); err != nil {
+		emit(chat.Event{Type: "error", Message: err.Error()})
+	}
+}
+
+func (s *Server) handleChatSession(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.chat.Session(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown chat session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "session": sess.ID, "mode": string(sess.Mode),
+		"scenario_id": sess.ScenarioID, "run_id": sess.RunID,
+		"draft": sess.DraftYAML(), "scenario": chat.ParseDraft(sess.DraftYAML()),
+		"transcript": sess.Transcript,
+	})
+}
+
+// handleChatDraft lets the human edit the draft the assistant is working on,
+// keeping both sides on the same document.
+func (s *Server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.chat.Session(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown chat session"})
+		return
+	}
+	var req struct {
+		YAML string `json:"yaml"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if _, err := casedef.Parse([]byte(req.YAML)); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	sess.SetDraft(req.YAML)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "scenario": chat.ParseDraft(req.YAML)})
+}
+
+// handleChatSaveDraft writes the current draft into the library.
+func (s *Server) handleChatSaveDraft(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.chat.Session(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown chat session"})
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req)
+
+	ctx := agentapi.WithSource(r.Context(), agentapi.SourceUI)
+	draft := sess.DraftYAML()
+
+	var (
+		out agentapi.SaveScenarioOutput
+		err error
+	)
+	if sess.ScenarioID != "" {
+		out, err = s.api.UpdateScenario(ctx, agentapi.UpdateScenarioInput{ID: sess.ScenarioID, YAML: draft})
+	} else {
+		out, err = s.api.CreateScenario(ctx, agentapi.CreateScenarioInput{YAML: draft, Path: req.Path})
+	}
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	sess.SetScenarioID(out.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": out.ID, "path": out.Path, "warnings": out.Warnings})
+}
+
+func newID() (string, error) {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	buf := make([]byte, 10)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, len(buf))
+	for i, b := range buf {
+		out[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return string(out), nil
+}
+
+// handleChatPrompts returns a random handful of starting suggestions. The
+// selection happens per request so opening the builder twice offers different
+// ideas rather than the same three every time.
+func (s *Server) handleChatPrompts(w http.ResponseWriter, r *http.Request) {
+	mode := chat.ModeBuild
+	if r.URL.Query().Get("mode") == string(chat.ModeDiscuss) {
+		mode = chat.ModeDiscuss
+	}
+	n := 3
+	if v := r.URL.Query().Get("n"); v != "" {
+		fmt.Sscanf(v, "%d", &n)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"prompts": chat.SamplePrompts(mode, n)})
+}

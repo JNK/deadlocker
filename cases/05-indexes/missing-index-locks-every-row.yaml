@@ -1,0 +1,98 @@
+name: An UPDATE with no usable index locks every row it scans
+category: Indexes
+tags: [full-scan, missing-index, next-key-lock, table-lock-in-practice]
+description: |
+  The single highest-value thing in this library for day-to-day work.
+
+  InnoDB locks rows as the storage engine reads them, not as the WHERE clause
+  filters them. If there is no index for the predicate, the engine reads every
+  row in the table and locks every row it reads. Rows that do not match are
+  released afterwards — but only under READ COMMITTED. Under REPEATABLE READ
+  they stay locked for the whole transaction.
+
+  The result is a statement that updates one row and locks all of them. It looks
+  like a row-level lock in the query and behaves like a table lock in
+  production.
+
+  Here `note` has no index, so `WHERE note = 'alpha'` scans the whole table.
+  Session B then tries to update a completely different row by primary key and
+  blocks.
+
+  Add `KEY idx_note (note)` to the schema in the playground and run it again:
+  step 5 stops blocking. That one line is the entire fix.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE ledger (
+      id     INT NOT NULL,
+      note   VARCHAR(32) NOT NULL,
+      amount BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - |
+    INSERT INTO ledger (id, note, amount) VALUES
+      (1, 'alpha', 100), (2, 'beta', 200), (3, 'gamma', 300),
+      (4, 'delta', 400), (5, 'epsilon', 500)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Update one row, by an unindexed column
+    sql: UPDATE ledger SET amount = amount + 1 WHERE note = 'alpha'
+    note: >-
+      One row affected. Now count the entries in the Locks tab: there is a
+      next-key lock for every row in the table plus the supremum, because the
+      scan had to read all of them.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Update an unrelated row, by primary key
+    sql: UPDATE ledger SET amount = amount + 1 WHERE id = 4
+    note: >-
+      Blocks. Row 4 has nothing to do with note = 'alpha', and the statement
+      uses the primary key. It still waits, because Session A's scan locked it
+      on the way past.
+    expect: blocks
+
+  - actor: a
+    label: Commit and release the whole table
+    sql: COMMIT
+    note: Session B's update is granted at once.
+    expect: ok
+
+  - actor: b
+    label: Now an insert works too
+    sql: INSERT INTO ledger (id, note, amount) VALUES (99, 'omega', 999)
+    note: >-
+      While Session A held the scan locks this would have blocked as well — the
+      supremum gap was locked along with everything else.
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

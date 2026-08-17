@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main">
+    <header class="page-header page-header-sticky">
+      <div class="page-header-main">
+        <h1>{{if .Editing}}Edit scenario{{else}}Playground{{end}}</h1>
+        {{if .Editing}}
+        <p class="lede">
+          Editing <code class="mono">{{.Case.Path}}</code> in place. Saving overwrites the file,
+          and the YAML is validated first — an invalid scenario is never written.
+        </p>
+        {{else}}
+        <p class="lede">
+          Write a scenario, run it immediately, and save it to the library once it earns its place.
+          Nothing is written to disk until you press Save.
+        </p>
+        {{end}}
+        {{if .Message}}<p class="notice">{{.Message}}</p>{{end}}
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-ghost" id="pg-validate" type="button">Validate</button>
+        <button class="btn btn-primary" id="pg-run" type="button" data-loading="Starting…">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Run
+        </button>
+      </div>
+    </header>
+
+    <div class="pg-status" id="pg-status" hidden></div>
+
+    <section class="pg-grid">
+      <div class="panel pg-editor-panel">
+        <div class="panel-head">
+          <h2>Scenario</h2>
+          <div class="panel-head-actions">
+            <input class="input input-sm" id="pg-path" spellcheck="false"
+                   placeholder="my-scenarios/experiment.yaml"
+                   value="{{if .Editing}}{{.Case.Path}}{{end}}" {{if .Editing}}readonly{{end}}>
+            <button class="btn btn-sm{{if .Editing}} btn-primary{{end}}" id="pg-save" type="button">
+              {{if .Editing}}Save changes{{else}}Save to library{{end}}
+            </button>
+          </div>
+        </div>
+        <div class="panel-body panel-body-flush">
+          <textarea id="pg-source" class="editor" spellcheck="false" autocomplete="off"
+                    autocapitalize="off" autocorrect="off" wrap="off">{{.Source}}</textarea>
+        </div>
+        <div class="editor-foot">
+          <span class="muted">YAML · <kbd>Tab</kbd> indents · <kbd>Ctrl</kbd>+<kbd>Space</kbd> completes</span>
+        </div>
+      </div>
+
+      <div class="panel pg-help">
+        <div class="panel-head"><h2>Format</h2></div>
+        <div class="panel-body">
+          <pre class="yaml small" data-yaml-view>name: Human readable title
+category: Gap locks          # optional; folder name is used otherwise
+description: |
+  Markdown. **Bold**, `code`, lists and headings all render
+  on the scenario page.
+tags: [gap-lock, insert-intention]
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ  # or READ COMMITTED, SERIALIZABLE
+  lock_wait_timeout: 300      # seconds, per session
+  deadlock_detect: true       # global; false turns deadlocks into timeouts
+  prepared: false             # true sends COM_STMT_EXECUTE, binary result rows
+  vars:                       # extra SET SESSION variables
+    sql_mode: STRICT_ALL_TABLES
+
+schema:
+  - CREATE TABLE t (...)
+
+seed:
+  - INSERT INTO t VALUES (...)
+
+actors:
+  - id: a
+    name: Request A
+    accent: blue              # blue amber violet teal rose
+  - id: b
+    name: Request B
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    note: Shown next to the step in the timeline.
+    expect: ok                # ok blocks error deadlock timeout
+</pre>
+
+          <div class="help-note">
+            <h3>How stepping works</h3>
+            <p>
+              Each step is submitted on its actor's own connection and given
+              <strong>{{.Settle}}&#8239;ms</strong> to finish. If it has not returned by then it is
+              marked <em>blocked</em> and left running, so you can advance the other actor and watch
+              the two interact. A blocked step updates itself when it finally succeeds, times out,
+              or is picked as a deadlock victim.
+            </p>
+            <h3>Useful things to assert</h3>
+            <ul>
+              <li><code>expect: blocks</code> — the statement should hit a lock wait. It still
+                counts as met if the statement later completes, times out or is rolled back.</li>
+              <li><code>expect: deadlock</code> — this actor should be the victim (errno 1213).</li>
+              <li><code>expect: timeout</code> — innodb_lock_wait_timeout should fire (errno 1205).</li>
+            </ul>
+            <h3>Ordering rule</h3>
+            <p>
+              A connection runs one statement at a time, so a blocked actor cannot accept its
+              next step. Put the statement that releases the lock — usually a
+              <code>COMMIT</code> on the other actor — before the blocked actor's next step.
+            </p>
+            <h3>Editor</h3>
+            <p>
+              <kbd>Ctrl</kbd>+<kbd>Space</kbd> completes keys and values, including the actor
+              ids this document declares. <kbd>Tab</kbd> indents, <kbd>Enter</kbd> keeps the
+              current indentation.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script src="/static/activity.js"></script>
+<script src="/static/yaml.js"></script>
+<script>window.DL_EDITING = {{if .Editing}}true{{else}}false{{end}};</script>
+<script src="/static/playground.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

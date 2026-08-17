@@ -1,0 +1,108 @@
+name: Three inserts of the same unique key deadlock
+category: Deadlocks
+tags: [deadlock, duplicate-key, unique-index, shared-lock]
+description: |
+  A deadlock with no UPDATE anywhere and no obvious lock ordering mistake. Three
+  sessions insert the same unique key; the first rolls back; two of the
+  remaining three-way pile-up deadlock.
+
+  The mechanism is a lock upgrade that most people do not know is happening.
+  When an INSERT hits a duplicate key, InnoDB does not simply fail: it takes a
+  SHARED lock on the existing row before reporting the error, so the row cannot
+  vanish underneath the check. So:
+
+    1. Session A inserts key 50 and holds an exclusive lock on the new record.
+    2. Sessions B and C try the same key, find A's uncommitted record, and both
+       queue for a shared lock on it.
+    3. Session A rolls back. The record disappears and both B and C are granted
+       their shared locks on the gap.
+    4. Both now want to insert, which needs an exclusive insert intention lock —
+       and each is blocked by the other's shared lock. Cycle, error 1213.
+
+  No expectations are declared on the last two steps because which session wins
+  is genuinely not determined. Run it a few times.
+
+  This is the strongest argument against "insert, catch duplicate, retry" loops
+  running at high concurrency on the same key.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE tokens (
+      id    INT NOT NULL AUTO_INCREMENT,
+      code  VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY uniq_code (code)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO tokens (code) VALUES ('alpha'), ('beta')
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+  - id: c
+    name: Session C
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: c
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Insert the contested code
+    sql: INSERT INTO tokens (code) VALUES ('gamma')
+    note: Succeeds. Session A holds an exclusive lock on the new uniq_code entry.
+    expect: ok
+
+  - actor: b
+    label: Insert the same code
+    sql: INSERT INTO tokens (code) VALUES ('gamma')
+    note: >-
+      Blocks. It found A's uncommitted row and is queuing for a SHARED lock on
+      it before it can report a duplicate key error.
+    expect: blocks
+
+  - actor: c
+    label: Insert the same code again
+    sql: INSERT INTO tokens (code) VALUES ('gamma')
+    note: Blocks the same way. Two sessions are now queued behind Session A.
+    expect: blocks
+
+  - actor: a
+    label: Roll back
+    sql: ROLLBACK
+    note: >-
+      The contested record disappears. B and C both get their shared locks, then
+      both need to upgrade to insert — and block each other. One of them dies
+      with error 1213; the other completes its insert.
+    expect: ok
+
+  - actor: b
+    label: Settle Session B
+    sql: ROLLBACK
+    note: Whichever session survived is rolled back here so nothing is left holding locks.
+
+  - actor: c
+    label: Settle Session C
+    sql: ROLLBACK

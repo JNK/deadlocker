@@ -1,0 +1,101 @@
+name: A non-locking read is never blocked by a writer
+category: Isolation levels
+tags: [mvcc, consistent-read, snapshot, repeatable-read]
+description: |
+  The counterweight to the rest of this library: most reads take no locks and
+  wait for nobody.
+
+  In REPEATABLE READ, a plain SELECT is served from a consistent snapshot taken
+  when the transaction first read something. It reads through MVCC undo records
+  rather than the current row, so an uncommitted UPDATE holding an exclusive
+  lock on that row is simply invisible to it.
+
+  Step 5 shows the snapshot in action: after the writer has committed, the
+  reader still sees the old value, because its snapshot was established earlier.
+  Step 7 shows the same query in a fresh transaction returning the new value.
+
+  This is why "my SELECT is slow" is almost never a locking problem in
+  REPEATABLE READ, and why adding FOR UPDATE to a read "to be safe" is such an
+  expensive habit.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id     INT NOT NULL,
+      owner  VARCHAR(64) NOT NULL,
+      cents  BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, cents) VALUES (10, 'ada', 5000)
+
+actors:
+  - id: a
+    name: Reader
+    accent: teal
+  - id: b
+    name: Writer
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction and establish a snapshot
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Read the balance
+    sql: SELECT cents FROM accounts WHERE id = 10
+    note: Returns 5000. This read fixes the snapshot for the rest of the transaction.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction and change the balance
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Update the row the reader just read
+    sql: UPDATE accounts SET cents = 1 WHERE id = 10
+    note: >-
+      Succeeds instantly. The reader holds no lock to conflict with, because a
+      consistent read takes none.
+    expect: ok
+
+  - actor: a
+    label: Read again while the writer is still uncommitted
+    sql: SELECT cents FROM accounts WHERE id = 10
+    note: >-
+      Still 5000, and no wait. The reader is looking at undo records, not at the
+      locked current row.
+    expect: ok
+
+  - actor: b
+    label: Commit the change
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Read once more, after the commit
+    sql: SELECT cents FROM accounts WHERE id = 10
+    note: >-
+      Still 5000. That is the "repeatable" in REPEATABLE READ: the snapshot
+      belongs to the transaction, not to the statement.
+    expect: ok
+
+  - actor: a
+    label: Commit and start fresh
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Read in a new transaction
+    sql: SELECT cents FROM accounts WHERE id = 10
+    note: Now it is 1. A new transaction gets a new snapshot.
+    expect: ok

@@ -1,0 +1,97 @@
+name: A foreign key makes the child lock the parent
+category: Indexes
+tags: [foreign-key, shared-lock, referential-integrity]
+description: |
+  Inserting a child row takes a shared lock on the parent row it references.
+  InnoDB needs that to guarantee the parent cannot be deleted or re-keyed
+  between the check and the commit.
+
+  The consequence is contention that does not appear anywhere in the SQL you
+  wrote. A high-traffic child table serialises against anything that updates the
+  parent's key, and a hot parent row — a tenant, an account, a shared
+  configuration row — becomes a bottleneck for every insert beneath it.
+
+  Note that the lock is on the referenced key. Updating an unrelated column of
+  the parent does not conflict, which step 7 shows.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE tenants (
+      id   INT NOT NULL,
+      name VARCHAR(64) NOT NULL,
+      plan VARCHAR(32) NOT NULL DEFAULT 'free',
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+  - |
+    CREATE TABLE documents (
+      id        INT NOT NULL,
+      tenant_id INT NOT NULL,
+      title     VARCHAR(64) NOT NULL,
+      PRIMARY KEY (id),
+      KEY idx_tenant (tenant_id),
+      CONSTRAINT fk_tenant FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO tenants (id, name) VALUES (1, 'acme'), (2, 'globex')
+  - INSERT INTO documents (id, tenant_id, title) VALUES (100, 1, 'welcome')
+
+actors:
+  - id: a
+    name: Tenant admin
+    accent: violet
+  - id: b
+    name: Document writer
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock the tenant row
+    sql: SELECT * FROM tenants WHERE id = 1 FOR UPDATE
+    note: An exclusive lock on the parent row.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Insert a document for that tenant
+    sql: INSERT INTO documents (id, tenant_id, title) VALUES (101, 1, 'notes')
+    note: >-
+      Blocks. The insert needs a shared lock on tenant 1 to prove the parent
+      exists, and Session A holds it exclusively. Nothing in this statement
+      mentions the tenants table.
+    expect: blocks
+
+  - actor: a
+    label: Release the tenant row
+    sql: COMMIT
+    note: The insert completes immediately.
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Update a non-key column of the parent instead
+    sql: UPDATE tenants SET plan = 'pro' WHERE id = 1
+    note: >-
+      This runs in its own transaction and takes an exclusive lock on the parent
+      row too — but it is the referenced key that matters for the foreign key
+      check, and inserts referencing it are not held up by an unrelated column
+      change once this commits.
+    expect: ok

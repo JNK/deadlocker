@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main">
+    <header class="page-header page-header-sticky">
+      <div class="page-header-main">
+        <h1>Scenario library</h1>
+        <p class="lede">
+          Every scenario is a YAML file describing a schema, a set of actors and the exact
+          order in which their statements are issued. Open one, then step through it to watch
+          the locks appear, block each other, and occasionally deadlock.
+        </p>
+      </div>
+    </header>
+
+    <section class="card-grid" id="case-grid">
+      {{range .Categories}}
+      <h2 class="grid-heading">{{.Name}}</h2>
+      <div class="grid">
+        {{range .Cases}}
+        <a class="case-card" href="/case/{{.ID}}" data-case data-name="{{.Name}} {{join .Tags " "}}">
+          <h3>{{.Name}}</h3>
+          <p>{{firstLine .Description}}</p>
+          <div class="case-card-foot">
+            <span class="chip">{{len .Actors}} actors</span>
+            <span class="chip">{{len .Steps}} steps</span>
+            {{if .MySQL.Isolation}}<span class="chip">{{.MySQL.Isolation}}</span>{{end}}
+          </div>
+          {{if .Tags}}
+          <div class="tag-row">
+            {{range .Tags}}<span class="tag">{{.}}</span>{{end}}
+          </div>
+          {{end}}
+        </a>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{if not .Categories}}
+      <div class="empty-state">
+        <h2>No scenarios yet</h2>
+        <p>Drop a YAML file into the <code>cases/</code> folder, or start from scratch in the playground.</p>
+        <a class="btn btn-primary" href="/playground">Open the playground</a>
+      </div>
+      {{end}}
+    </section>
+  </main>
+</div>
+
+
+<script src="/static/app.js"></script>
+<script src="/static/activity.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

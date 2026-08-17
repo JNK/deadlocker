@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main">
+    <header class="page-header page-header-sticky">
+      <div class="page-header-main">
+        <div class="crumb"><a href="/">Scenarios</a> <span>/</span> Compare</div>
+        <h1>{{if .Diff}}{{.Diff.A.CaseName}}{{else}}Compare two runs{{end}}</h1>
+        {{if .Diff}}
+        <div class="badge-row">
+          <span class="chip">{{.Diff.Changed}} of {{len .Diff.Steps}} steps differ</span>
+          {{if not .Diff.SameCase}}<span class="chip chip-warn">different scenarios — aligned by step number</span>{{end}}
+        </div>
+        {{end}}
+      </div>
+      {{if .Diff}}
+      <div class="page-actions">
+        <a class="btn btn-ghost" href="/case/{{.Diff.A.CaseID}}#case=history">Back to history</a>
+        <a class="btn btn-ghost" href="/compare">Pick different runs</a>
+      </div>
+      {{end}}
+    </header>
+
+    {{if .Error}}
+    <div class="panel panel-danger">
+      <div class="panel-body"><p>{{.Error}}</p></div>
+    </div>
+    {{end}}
+
+    {{if .Diff}}
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Runs</h2>
+      </div>
+      <div class="panel-body">
+        <div class="compare-heads">
+          <div class="compare-head side-a">
+            <span class="side-tag">A</span>
+            <div>
+              <strong>{{dateTime .Diff.A.StartedAt}}</strong>
+              <div class="muted mono">{{.Diff.A.RunID}} · {{.Diff.A.Image}} · {{if .Diff.A.Isolation}}{{.Diff.A.Isolation}}{{else}}default isolation{{end}}</div>
+            </div>
+            <span class="outcome outcome-{{.Diff.A.Outcome}}">{{.Diff.A.Outcome}}</span>
+          </div>
+          <div class="compare-head side-b">
+            <span class="side-tag">B</span>
+            <div>
+              <strong>{{dateTime .Diff.B.StartedAt}}</strong>
+              <div class="muted mono">{{.Diff.B.RunID}} · {{.Diff.B.Image}} · {{if .Diff.B.Isolation}}{{.Diff.B.Isolation}}{{else}}default isolation{{end}}</div>
+            </div>
+            <span class="outcome outcome-{{.Diff.B.Outcome}}">{{.Diff.B.Outcome}}</span>
+          </div>
+        </div>
+
+        {{if .Diff.Setup}}
+        <div class="panel-subhead">What differed about the setup and totals</div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Field</th><th>Run A</th><th>Run B</th></tr></thead>
+            <tbody>
+              {{range .Diff.Setup}}
+              <tr><td>{{.Label}}</td><td class="mono cell-a">{{.A}}</td><td class="mono cell-b">{{.B}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}
+        <p class="muted">Setup and totals were identical.</p>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Step by step</h2>
+        <div class="panel-head-actions">
+          <label class="switch"><input type="checkbox" id="only-diffs" checked> only steps that differ</label>
+        </div>
+      </div>
+      <div class="panel-body panel-body-flush">
+        <div class="diff-list" id="diff-list">
+          {{range .Diff.Steps}}
+          <div class="diff-step{{if .Differs}} is-changed{{else}} is-same{{end}}" data-changed="{{if .Differs}}1{{else}}0{{end}}">
+            <div class="diff-step-head">
+              <span class="step-num">{{.Index}}</span>
+              <strong>{{.Label}}</strong>
+              {{if .Differs}}
+              <span class="mini mini-warn">{{len .Differences}} difference{{if ne (len .Differences) 1}}s{{end}}</span>
+              {{else}}
+              <span class="mini mini-ok">identical</span>
+              {{end}}
+            </div>
+
+            {{if .Differs}}
+            <div class="diff-grid">
+              {{range .Differences}}
+              <div class="diff-label">{{.Label}}</div>
+              <div class="diff-a mono">{{.A}}</div>
+              <div class="diff-b mono">{{.B}}</div>
+              {{end}}
+            </div>
+            {{end}}
+
+            <div class="diff-sql">
+              {{if .A}}<pre class="sql">{{trim .A.SQL}}</pre>{{else if .B}}<pre class="sql">{{trim .B.SQL}}</pre>{{end}}
+            </div>
+          </div>
+          {{end}}
+        </div>
+      </div>
+    </section>
+
+    {{else}}
+
+    <section class="panel">
+      <div class="panel-head"><h2>Pick two runs</h2></div>
+      <div class="panel-body">
+        {{if .AllHistory}}
+        <p class="muted" style="margin-top:0">
+          Comparing the same scenario under different settings is the most useful pairing —
+          run it, edit one line in the playground, run it again, then compare.
+        </p>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr>
+              <th></th><th>Started</th><th>Scenario</th><th>Outcome</th>
+              <th>Isolation</th><th>Steps</th><th>Blocked</th><th>Deadlocks</th><th></th>
+            </tr></thead>
+            <tbody>
+              {{range .AllHistory}}
+              <tr>
+                <td><input type="checkbox" class="run-pick" value="{{.RunID}}"></td>
+                <td class="mono">{{dateTime .StartedAt}}</td>
+                <td>{{.CaseName}}</td>
+                <td><span class="outcome outcome-{{.Outcome}}">{{.Outcome}}</span></td>
+                <td class="mono">{{if .Isolation}}{{.Isolation}}{{else}}—{{end}}</td>
+                <td class="mono">{{.Submitted}}/{{len .Steps}}</td>
+                <td class="mono">{{.Blocked}}</td>
+                <td class="mono">{{.Deadlocks}}</td>
+                <td><a class="link" href="/run/{{.RunID}}">open</a></td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        <div class="page-actions" style="margin-top:14px">
+          <button class="btn btn-primary" id="compare-selected" type="button" disabled>Compare selected</button>
+        </div>
+        {{else}}
+        <div class="dock-empty">No runs recorded yet. Run a scenario or two and come back.</div>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script src="/static/activity.js"></script>
+<script src="/static/case.js"></script>
+<script src="/static/compare.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

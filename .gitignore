@@ -1,0 +1,13 @@
+# Built binary
+/deadlocker
+/dist/
+*.test
+
+# Local runtime state: the bbolt store holds configuration, including an API
+# key if one is set.
+/.deadlocker/
+
+# Machine-local editor/tool settings
+.claude/settings.local.json
+
+.DS_Store

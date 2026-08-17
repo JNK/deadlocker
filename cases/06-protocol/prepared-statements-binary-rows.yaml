@@ -1,0 +1,119 @@
+name: Prepared statements put the result set in the binary protocol
+category: Wire protocol
+tags: [prepared-statements, binary-protocol, com-stmt-execute, wire]
+description: |
+  Every other scenario sends plain `COM_QUERY` text, because arguments are
+  interpolated client-side. Setting `prepared: true` turns that off and the
+  driver uses real prepared statements instead.
+
+  Open the **Wire** tab and watch what changes:
+
+  - `COM_STMT_PREPARE` carries the SQL with `?` placeholders, and the server
+    answers with a statement id plus one `ColumnDefinition` per parameter and
+    per result column. That metadata is what makes binary rows decodable at all
+    — the row bytes themselves carry no type information.
+  - `COM_STMT_EXECUTE` sends only the statement id and the parameter values.
+    The SQL never goes over the wire again.
+  - Result rows come back marked **binary**. Each one is a `0x00` header, a NULL
+    bitmap, then values packed according to each column's type: 8 raw
+    little-endian bytes for a `BIGINT`, a length-prefixed string for a
+    `VARCHAR`, a 1-byte length followed by packed date parts for a `DATETIME`.
+
+  The table deliberately mixes types so the decoder has something to chew on:
+  unsigned `BIGINT`, `DOUBLE`, `DECIMAL`, `DATE`, `DATETIME(3)`, `TIME`,
+  `TINYINT` and a nullable column.
+
+  Locking is completely unaffected. Steps 4 to 6 repeat the plain record-lock
+  scenario through prepared statements and it blocks exactly as before: the
+  protocol changes how bytes are framed, not what InnoDB does with them.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+  prepared: true
+
+schema:
+  - |
+    CREATE TABLE readings (
+      id       INT NOT NULL,
+      sensor   VARCHAR(32) NOT NULL,
+      ticks    BIGINT UNSIGNED NOT NULL,
+      ratio    DOUBLE NOT NULL,
+      amount   DECIMAL(12,2) NOT NULL,
+      ok       TINYINT NOT NULL,
+      taken_on DATE NOT NULL,
+      taken_at DATETIME(3) NOT NULL,
+      elapsed  TIME NOT NULL,
+      note     VARCHAR(64) NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - |
+    INSERT INTO readings (id, sensor, ticks, ratio, amount, ok, taken_on, taken_at, elapsed, note) VALUES
+      (1, 'north', 18446744073709551615, 0.5, 1234.56, 1, '2026-03-01', '2026-03-01 08:15:30.250', '01:02:03', 'baseline'),
+      (2, 'south', 42,                   -2.25, -99.99, 0, '2026-03-02', '2026-03-02 23:59:59.999', '-00:30:00', NULL)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Read one row by id
+    sql: SELECT * FROM readings WHERE id = ?
+    args: [1]
+    note: >-
+      One prepare, one execute, one binary row. In the Wire tab you should see
+      the parameter and column definitions go past before the row itself.
+    expect: ok
+
+  - actor: a
+    label: Read the row with NULLs and negatives
+    sql: SELECT id, sensor, ticks, ratio, amount, ok, taken_on, taken_at, elapsed, note FROM readings WHERE id = ?
+    args: [2]
+    note: >-
+      Exercises the awkward corners: a NULL flagged in the bitmap rather than
+      sent as a value, a negative DOUBLE, and a negative TIME, which carries its
+      sign in a leading byte.
+    expect: ok
+
+  - actor: a
+    label: Read both rows
+    sql: SELECT id, sensor, ticks FROM readings ORDER BY id
+    note: The statement takes no parameters, but it is still prepared and executed.
+    expect: ok
+
+  - actor: a
+    label: Open a transaction and lock a row
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock reading 1
+    sql: SELECT * FROM readings WHERE id = ? FOR UPDATE
+    args: [1]
+    note: X,REC_NOT_GAP, exactly as with a plain text query.
+    expect: ok
+
+  - actor: b
+    label: Ask for the same row
+    sql: SELECT * FROM readings WHERE id = ? FOR UPDATE
+    args: [1]
+    note: Blocks. The protocol is irrelevant to the lock manager.
+    expect: blocks
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

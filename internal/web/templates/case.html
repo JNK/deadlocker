@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main main-tabbed">
+    <header class="page-header page-header-sticky">
+      <div class="page-header-main">
+        <div class="crumb"><a href="/">Scenarios</a> <span>/</span> {{.Case.Category}}</div>
+        <h1>{{.Case.Name}}</h1>
+        <div class="badge-row">
+          <span class="chip">{{.Case.MySQL.Image}}</span>
+          {{if .Case.MySQL.Isolation}}<span class="chip">{{.Case.MySQL.Isolation}}</span>{{end}}
+          <span class="chip">lock wait {{.Case.MySQL.LockWaitTimeout}}s</span>
+          {{if .Case.MySQL.Prepared}}<span class="chip">prepared statements</span>{{end}}
+          <span class="chip">{{len .Case.Actors}} actors</span>
+          <span class="chip">{{len .Case.Steps}} steps</span>
+          {{range .Case.Tags}}<span class="tag">{{.}}</span>{{end}}
+        </div>
+      </div>
+      <div class="page-actions">
+        <a class="btn btn-ghost" href="/edit/{{.Case.ID}}">Edit</a>
+        {{if .ChatReady}}<button class="btn btn-ghost" type="button" data-builder data-scenario="{{.Case.ID}}">Edit with assistant</button>{{end}}
+        <form method="post" action="/run">
+          <input type="hidden" name="case_id" value="{{.Case.ID}}">
+          <button class="btn btn-primary" type="submit" data-loading="Starting MySQL…">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            Run scenario
+          </button>
+        </form>
+      </div>
+
+      <nav class="tabs" data-tabs="case">
+        <button class="tab is-active" data-tab="overview" type="button">Overview</button>
+        <button class="tab" data-tab="sequence" type="button">Sequence</button>
+        <button class="tab" data-tab="history" type="button">History {{if .History}}<span class="tab-count">({{len .History}})</span>{{end}}</button>
+        <button class="tab" data-tab="source" type="button">Source</button>
+      </nav>
+    </header>
+
+    <div class="tab-panels" data-panels="case">
+      <section class="tab-panel is-active" data-panel="overview">
+        <div class="case-overview">
+          <article class="prose">
+            {{if .Description}}{{.Description}}{{else}}<p class="muted">This scenario has no description yet.</p>{{end}}
+          </article>
+
+          <aside class="case-aside">
+            <div class="panel">
+              <div class="panel-head"><h2>Actors</h2><span class="muted">{{len .Case.Actors}}</span></div>
+              <div class="panel-body">
+                {{range .Case.Actors}}
+                <div class="actor-row accent-{{.Accent}}">
+                  <span class="actor-dot"></span>
+                  <strong>{{.Name}}</strong>
+                  <code>{{.ID}}</code>
+                </div>
+                {{end}}
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head"><h2>Schema</h2></div>
+              <div class="panel-body">
+                {{range .Case.Schema}}<pre class="sql">{{trim .}}</pre>{{end}}
+                {{if .Case.Seed}}
+                  <div class="panel-subhead">Seed data</div>
+                  {{range .Case.Seed}}<pre class="sql">{{trim .}}</pre>{{end}}
+                {{end}}
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="sequence">
+        <div class="panel">
+          <div class="panel-head"><h2>Sequence</h2><span class="muted">{{len .Case.Steps}} steps</span></div>
+          <div class="panel-body">
+            <ol class="step-list">
+              {{range $i, $s := .Case.Steps}}
+              <li>
+                <span class="step-num">{{add $i 1}}</span>
+                <span class="step-actor">{{$s.Actor}}</span>
+                <code class="step-sql">{{shortSQL $s.SQL}}</code>
+                {{template "expect-badge" $s.Expect}}
+                {{if $s.Note}}<p class="step-note">{{$s.Note}}</p>{{end}}
+              </li>
+              {{end}}
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="history">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Run history</h2>
+            <span class="muted">kept in memory for this session</span>
+            <div class="panel-head-actions">
+              <button class="btn btn-sm" id="compare-selected" type="button" disabled>Compare selected</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            {{if .History}}
+            <p class="muted" style="margin-top:0">Tick two runs to compare them side by side.</p>
+            <div class="table-wrap">
+              <table class="data">
+                <thead><tr>
+                  <th></th><th>Started</th><th>Outcome</th><th>Steps</th>
+                  <th>Blocked</th><th>Deadlocks</th><th>Timeouts</th><th>Mismatches</th>
+                  <th>Isolation</th><th>Duration</th><th></th>
+                </tr></thead>
+                <tbody>
+                  {{range .History}}
+                  <tr>
+                    <td><input type="checkbox" class="run-pick" value="{{.RunID}}"></td>
+                    <td class="mono">{{dateTime .StartedAt}}</td>
+                    <td><span class="outcome outcome-{{.Outcome}}">{{.Outcome}}</span></td>
+                    <td class="mono">{{.Submitted}}/{{len .Steps}}</td>
+                    <td class="mono">{{.Blocked}}</td>
+                    <td class="mono">{{.Deadlocks}}</td>
+                    <td class="mono">{{.Timeouts}}</td>
+                    <td class="mono">{{.Mismatches}}</td>
+                    <td class="mono">{{if .Isolation}}{{.Isolation}}{{else}}—{{end}}</td>
+                    <td class="mono">{{since .Duration}}</td>
+                    <td><a class="link" href="/run/{{.RunID}}">open</a></td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+            {{else}}
+            <div class="dock-empty">No runs yet. Run the scenario and it will appear here.</div>
+            {{end}}
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="source">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Source</h2>
+            <span class="muted mono">{{.Case.Path}}</span>
+            <div class="panel-head-actions">
+              <a class="btn btn-sm" href="/edit/{{.Case.ID}}">Edit</a>
+            </div>
+          </div>
+          <div class="panel-body panel-body-flush">
+            <pre class="yaml code-scroll" data-yaml-view>{{.Source}}</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+{{if .ChatReady}}
+<div data-discuss data-scenario="{{.Case.ID}}" hidden></div>
+{{template "assistant-bubble" .}}
+{{end}}
+
+<script src="/static/app.js"></script>
+<script src="/static/activity.js"></script>
+<script src="/static/yaml.js"></script>
+<script src="/static/case.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>
