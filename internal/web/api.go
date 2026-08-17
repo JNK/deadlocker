@@ -407,3 +407,50 @@ func (s *Server) handleChatPrompts(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"prompts": chat.SamplePrompts(mode, n)})
 }
+
+// ------------------------------------------------------- background analyses
+
+// handleAnalyse starts an isolation-level sweep or a minimal-repro reduction.
+// Both run many real MySQL runs, so they return a job id immediately and the
+// browser polls.
+func (s *Server) handleAnalyse(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ScenarioID string `json:"scenario_id"`
+		YAML       string `json:"yaml"`
+		Target     string `json:"target"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+
+	ctx := agentapi.WithSource(r.Context(), agentapi.SourceUI)
+	var (
+		out agentapi.JobStartedOutput
+		err error
+	)
+	switch r.PathValue("kind") {
+	case "isolation":
+		out, err = s.api.StartIsolationMatrix(ctx, agentapi.IsolationMatrixInput{
+			ScenarioID: req.ScenarioID, YAML: req.YAML,
+		})
+	case "shrink":
+		out, err = s.api.StartShrink(ctx, agentapi.ShrinkInput{
+			ScenarioID: req.ScenarioID, YAML: req.YAML, Target: req.Target,
+		})
+	default:
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown analysis"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "job_id": out.JobID})
+}
+
+func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
+	out, err := s.api.GetJob(r.Context(), agentapi.GetJobInput{JobID: r.PathValue("id")})
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "job": out.Job})
+}

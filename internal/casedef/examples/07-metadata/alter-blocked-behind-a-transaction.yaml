@@ -1,0 +1,99 @@
+name: One open transaction stops ALTER TABLE, and every reader behind it
+category: Metadata locks
+tags: [metadata-lock, mdl, alter-table, ddl, head-of-line-blocking]
+description: |
+  The stall that takes production down without a single row lock being
+  involved.
+
+  Every statement takes a metadata lock on the tables it touches, and holds it
+  until the transaction ends. A transaction that merely *read* a table keeps a
+  `SHARED_READ` metadata lock on it. That is harmless against other readers —
+  and fatal to `ALTER TABLE`, which needs an exclusive one.
+
+  So far that is only a slow migration. The part that turns it into an outage
+  is step 4: the metadata lock queue is strictly ordered. Once `ALTER TABLE` is
+  waiting, every later statement on that table queues **behind** it, including
+  plain `SELECT`s that would otherwise have been perfectly compatible with the
+  transaction already holding the lock.
+
+  One idle transaction, one migration, and the table is unreadable.
+
+  Open the Locks tab and look at the Metadata locks section rather than the row
+  locks: `data_locks` is empty here, which is exactly why this class of stall is
+  so confusing to diagnose. Nothing is fighting over rows.
+
+  `lock_wait_timeout` is set to 20 seconds for this scenario. Its default is
+  31536000 — a year — so in production the ALTER simply waits forever, and so
+  does everything behind it.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 60
+  vars:
+    # Governs metadata lock waits. innodb_lock_wait_timeout does not.
+    lock_wait_timeout: 20
+
+schema:
+  - |
+    CREATE TABLE catalogue (
+      id    INT NOT NULL,
+      label VARCHAR(64) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO catalogue (id, label) VALUES (1, 'one'), (2, 'two'), (3, 'three')
+
+actors:
+  - id: a
+    name: Idle transaction
+    accent: blue
+  - id: b
+    name: Migration
+    accent: amber
+  - id: c
+    name: Ordinary reader
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Read one row, then do nothing else
+    sql: SELECT * FROM catalogue WHERE id = 1
+    note: >-
+      A plain read. It takes no row locks worth mentioning, but it does take a
+      SHARED_READ metadata lock on the table — and holds it until this
+      transaction ends, which it never does.
+    expect: ok
+
+  - actor: b
+    label: Run the migration
+    sql: ALTER TABLE catalogue ADD COLUMN note VARCHAR(64) NULL
+    note: >-
+      Blocks. ALTER needs an exclusive metadata lock and cannot have one while
+      the idle transaction holds its shared one. Check the Metadata locks
+      section: the ALTER's request is PENDING.
+    expect: blocks
+
+  - actor: c
+    label: An unrelated SELECT arrives
+    sql: SELECT * FROM catalogue WHERE id = 2
+    note: >-
+      This is the surprising one. This read is entirely compatible with the
+      lock the idle transaction holds, and it still blocks — because the
+      metadata lock queue is ordered and the pending ALTER is ahead of it. From
+      here on, every query against this table stalls.
+    expect: blocks
+
+  - actor: a
+    label: The idle transaction finally commits
+    sql: COMMIT
+    note: >-
+      The shared lock is released, the ALTER takes its exclusive lock and runs,
+      and only then does the queued reader complete.
+    expect: ok

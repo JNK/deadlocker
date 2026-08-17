@@ -91,6 +91,11 @@ type StepResult struct {
 	// usually asserting on, so it must survive the step completing.
 	WasBlocked bool `json:"was_blocked,omitempty"`
 
+	// Plan is the optimizer's plan for this statement. Which index it picks is
+	// what decides what gets locked, so this is the missing half of any
+	// explanation involving a full scan.
+	Plan []PlanRow `json:"plan,omitempty"`
+
 	Expect      casedef.Expectation `json:"expect,omitempty"`
 	Actual      casedef.Expectation `json:"actual,omitempty"`
 	Verdict     string              `json:"verdict,omitempty"` // match | mismatch
@@ -112,6 +117,72 @@ func (s *StepResult) clone() *StepResult {
 		c.Error = &e
 	}
 	return &c
+}
+
+// PlanRow is one row of EXPLAIN.
+type PlanRow struct {
+	ID           int    `json:"id"`
+	SelectType   string `json:"select_type,omitempty"`
+	Table        string `json:"table,omitempty"`
+	Type         string `json:"type,omitempty"`
+	PossibleKeys string `json:"possible_keys,omitempty"`
+	Key          string `json:"key,omitempty"`
+	KeyLen       string `json:"key_len,omitempty"`
+	Ref          string `json:"ref,omitempty"`
+	Rows         int64  `json:"rows"`
+	Filtered     string `json:"filtered,omitempty"`
+	Extra        string `json:"extra,omitempty"`
+	// Explain reads the plan back in terms of locking.
+	Explain string `json:"explain,omitempty"`
+}
+
+// explainable reports whether a plan is worth having. BEGIN, COMMIT and SET
+// have none, and a plain INSERT ... VALUES reads nothing: MySQL still returns a
+// dummy row for it, which would be read as a full table scan and be actively
+// misleading.
+func explainable(sqlText string) bool {
+	up := strings.ToUpper(strings.TrimSpace(sqlText))
+
+	if strings.HasPrefix(up, "INSERT") || strings.HasPrefix(up, "REPLACE") {
+		// Only the INSERT ... SELECT form actually reads rows.
+		return strings.Contains(up, " SELECT ")
+	}
+	for _, kw := range []string{"SELECT", "UPDATE", "DELETE", "WITH", "TABLE "} {
+		if strings.HasPrefix(up, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// explainLocking turns a plan row into the sentence that matters here: what
+// this access path means for the locks the statement will take.
+func explainLocking(r PlanRow) string {
+	switch strings.ToLower(r.Type) {
+	case "all":
+		return "Full table scan: no index is usable, so InnoDB reads and locks every row in the table, not just the matching ones."
+	case "index":
+		return "Full index scan: every entry in the index is read, so every corresponding row is locked."
+	case "range":
+		return "Range scan on " + orIndexName(r.Key) + ": locks the records read plus the gaps between them, which blocks inserts into that range."
+	case "ref", "ref_or_null":
+		return "Non-unique index lookup on " + orIndexName(r.Key) + ": locks the matching index entries, the rows they point to, and the gap around them."
+	case "eq_ref", "const":
+		return "Unique index lookup on " + orIndexName(r.Key) + ": locks just the matching record, with no gap lock."
+	case "index_merge":
+		return "Index merge across " + orIndexName(r.Key) + ": locks everything reached through each index used."
+	}
+	if strings.Contains(strings.ToLower(r.Extra), "impossible where") {
+		return "The optimizer proved no row can match, so nothing is read and nothing is locked."
+	}
+	return ""
+}
+
+func orIndexName(k string) string {
+	if k == "" || k == "NULL" {
+		return "no index"
+	}
+	return k
 }
 
 // ActorState is one actor's live connection state.
@@ -746,12 +817,19 @@ func (r *Run) execute(idx int, done chan struct{}) {
 	r.mu.Unlock()
 
 	caseStep := r.Case.Steps[idx]
+
+	// Explain first, on the admin connection: it takes no row locks and must
+	// not disturb the actor's transaction. A plan is worth having even when the
+	// statement itself is about to block.
+	plan := r.explainStep(sqlText, caseStep.Args)
+
 	start := time.Now()
 	res := runStatement(r.execCtx, a.conn, sqlText, caseStep.Args)
 	end := time.Now()
 
 	r.mu.Lock()
 	st.EndedAt = &end
+	st.Plan = plan
 	st.DurationMS = end.Sub(start).Milliseconds()
 	st.Columns = res.columns
 	st.Rows = res.rows
@@ -787,6 +865,79 @@ func (r *Run) execute(idx int, done chan struct{}) {
 	snap := r.snapshot(context.Background())
 	r.publishLocks(snap)
 	r.publishState()
+}
+
+// explainStep asks the optimizer what it would do, on a connection that holds
+// no locks of its own.
+func (r *Run) explainStep(sqlText string, args []any) []PlanRow {
+	if !explainable(sqlText) {
+		return nil
+	}
+	r.mu.Lock()
+	db := r.setupDB
+	r.mu.Unlock()
+	if db == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, "EXPLAIN "+sqlText, args...)
+	if err != nil {
+		// A statement the optimizer refuses to explain is not an error worth
+		// surfacing; the step itself is what matters.
+		return nil
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil
+	}
+
+	var out []PlanRow
+	for rows.Next() {
+		raw := make([]sql.RawBytes, len(cols))
+		scan := make([]any, len(cols))
+		for i := range raw {
+			scan[i] = &raw[i]
+		}
+		if err := rows.Scan(scan...); err != nil {
+			return out
+		}
+		var pr PlanRow
+		for i, c := range cols {
+			v := string(raw[i])
+			switch strings.ToLower(c) {
+			case "id":
+				fmt.Sscanf(v, "%d", &pr.ID)
+			case "select_type":
+				pr.SelectType = v
+			case "table":
+				pr.Table = v
+			case "type":
+				pr.Type = v
+			case "possible_keys":
+				pr.PossibleKeys = v
+			case "key":
+				pr.Key = v
+			case "key_len":
+				pr.KeyLen = v
+			case "ref":
+				pr.Ref = v
+			case "rows":
+				fmt.Sscanf(v, "%d", &pr.Rows)
+			case "filtered":
+				pr.Filtered = v
+			case "extra":
+				pr.Extra = v
+			}
+		}
+		pr.Explain = explainLocking(pr)
+		out = append(out, pr)
+	}
+	return out
 }
 
 func (r *Run) anyBusyLocked() bool {

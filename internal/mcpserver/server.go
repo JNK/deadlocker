@@ -144,6 +144,23 @@ func registerTools(srv *mcp.Server, api *agentapi.API) {
 			"timeouts and expectation mismatches.",
 		api.ListHistory)
 
+	tool(srv, "isolation_matrix", "Sweep every isolation level",
+		"Run the same scenario once at each of READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ "+
+			"and SERIALIZABLE, and report where the outcomes differ. Answers 'what would this do "+
+			"under a different isolation level' by doing it. Returns a job id; poll get_job.",
+		api.StartIsolationMatrix)
+
+	tool(srv, "shrink_scenario", "Reduce to a minimal repro",
+		"Repeatedly drop steps and re-run, keeping only those needed to still produce the "+
+			"scenario's deadlock, timeout or block. Turns a messy reproduction into the smallest "+
+			"sequence that still demonstrates the behaviour. Returns a job id; poll get_job.",
+		api.StartShrink)
+
+	tool(srv, "get_job", "Check a background analysis",
+		"Fetch the state and result of an isolation_matrix or shrink_scenario job. These run "+
+			"many real MySQL runs, so they take tens of seconds.",
+		api.GetJob)
+
 	tool(srv, "compare_runs", "Compare two runs",
 		"Diff two recorded runs step by step, reporting only what actually differed.",
 		api.CompareRuns)

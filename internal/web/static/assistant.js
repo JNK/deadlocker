@@ -82,14 +82,20 @@
         }
       });
 
-      C.createSession('build', st.scenarioID, '').then(function (res) {
-        if (!res.ok) { el.log.note('error', res.error); return; }
+      C.openSession('build', st.scenarioID, '').then(function (res) {
+        if (!res || !res.ok) { el.log.note('error', (res && res.error) || 'could not start a session'); return; }
         st.session = res.session;
         if (res.draft) {
           setDraftValue(res.draft);
-          st.savedDraft = res.draft;
+          st.savedDraft = res.resumed ? st.savedDraft : res.draft;
           st.pane.setScenario(res.scenario);
-          paint(false);
+          paint(res.resumed ? isDraftDirty() : false);
+        }
+        if (res.resumed) {
+          C.replay(el.log, res.transcript);
+          el.log.note('info', 'Picked up where you left off.');
+          // A run started before the reload is still there; show it again.
+          if (res.run_id) st.pane.attach(res.run_id);
         }
       });
 
@@ -347,9 +353,10 @@
           el.log.note('error', 'Not configured yet — set an endpoint and model in Settings.');
         }
       });
-      C.createSession('discuss', st.scenarioID, st.runID).then(function (res) {
-        if (!res.ok) { el.log.note('error', res.error); return; }
+      C.openSession('discuss', st.scenarioID, st.runID).then(function (res) {
+        if (!res || !res.ok) { el.log.note('error', (res && res.error) || 'could not start a session'); return; }
         st.session = res.session;
+        if (res.resumed) C.replay(el.log, res.transcript);
       });
     }
 

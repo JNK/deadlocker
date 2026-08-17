@@ -2450,3 +2450,154 @@ body::before {
 .pg-format > summary::-webkit-details-marker { display: none; }
 .pg-format > summary h2::before { content: "▸ "; color: var(--text-3); font-size: 10px; }
 .pg-format[open] > summary h2::before { content: "▾ "; }
+
+/* ============================================================== sequence */
+
+/* A rail down the left with the actor's colour, and statements shown in full:
+   the SQL is the content here, so truncating it defeats the point. */
+.sequence { margin: 0; padding: 6px 0; list-style: none; }
+.seq-step { display: flex; gap: 12px; padding: 0 18px; }
+.seq-rail { display: flex; flex-direction: column; align-items: center; width: 22px; flex: none; }
+.seq-num {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  margin-top: 12px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  flex: none;
+}
+.seq-line { flex: 1; width: 2px; margin: 4px 0; background: var(--border); border-radius: 1px; }
+.seq-step:last-child .seq-line { background: transparent; }
+
+.seq-step.accent-blue .seq-num { background: color-mix(in srgb, var(--a-blue) 18%, transparent); color: var(--a-blue); }
+.seq-step.accent-amber .seq-num { background: color-mix(in srgb, var(--a-amber) 20%, transparent); color: var(--a-amber); }
+.seq-step.accent-violet .seq-num { background: color-mix(in srgb, var(--a-violet) 18%, transparent); color: var(--a-violet); }
+.seq-step.accent-teal .seq-num { background: color-mix(in srgb, var(--a-teal) 20%, transparent); color: var(--a-teal); }
+.seq-step.accent-rose .seq-num { background: color-mix(in srgb, var(--a-rose) 18%, transparent); color: var(--a-rose); }
+.seq-step.accent-blue .seq-line { background: color-mix(in srgb, var(--a-blue) 22%, transparent); }
+.seq-step.accent-amber .seq-line { background: color-mix(in srgb, var(--a-amber) 24%, transparent); }
+.seq-step.accent-violet .seq-line { background: color-mix(in srgb, var(--a-violet) 22%, transparent); }
+.seq-step.accent-teal .seq-line { background: color-mix(in srgb, var(--a-teal) 24%, transparent); }
+.seq-step.accent-rose .seq-line { background: color-mix(in srgb, var(--a-rose) 22%, transparent); }
+
+.seq-body { flex: 1; min-width: 0; padding: 10px 0 14px; }
+.seq-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 6px; }
+.seq-actor { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; }
+.seq-step.accent-blue .seq-actor { color: var(--a-blue); }
+.seq-step.accent-amber .seq-actor { color: var(--a-amber); }
+.seq-step.accent-violet .seq-actor { color: var(--a-violet); }
+.seq-step.accent-teal .seq-actor { color: var(--a-teal); }
+.seq-step.accent-rose .seq-actor { color: var(--a-rose); }
+.seq-label { font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; }
+.seq-sql {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  /* Statements wrap rather than being cut off: the query is the content. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.seq-note { margin: 7px 0 0; font-size: 12.5px; color: var(--text-3); line-height: 1.5; }
+
+/* ================================================ playground fills the page */
+
+/* The editor and the step pane each scroll on their own, so a long scenario
+   does not push the page around. */
+.main-editor { display: flex; flex-direction: column; overflow: hidden; }
+.main-editor .pg-grid { flex: 1; min-height: 0; }
+.pg-editor-panel { min-height: 0; overflow: hidden; }
+.pg-editor-panel .panel-body-flush { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.pg-editor-panel .editor-wrap { flex: 1; min-height: 0; height: auto; }
+.pg-editor-panel .editor-wrap .editor { min-height: 0; height: 100%; }
+
+/* ======================================================= EXPLAIN plan rows */
+
+.plan-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.plan-table th, .plan-table td {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-family: var(--mono);
+}
+.plan-table th {
+  font-family: var(--sans);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-3);
+}
+.plan-type {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-weight: 700;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+/* A full scan is the finding, so it is the one that is coloured. */
+.plan-type.is-scan { background: var(--danger-soft); color: var(--danger); }
+.plan-type.is-range { background: var(--warn-soft); color: var(--warn); }
+.plan-type.is-unique { background: var(--ok-soft); color: var(--ok); }
+.plan-explain { margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+
+/* ============================================================ MDL section */
+
+.mdl-row {
+  display: grid;
+  grid-template-columns: 90px 130px 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.mdl-row:last-child { border-bottom: 0; }
+.mdl-type { font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.mdl-row.is-pending { background: var(--warn-soft); }
+.mdl-row.is-pending .mdl-type { color: var(--warn); }
+.mdl-explain { color: var(--text-3); font-size: 11.5px; }
+
+/* ============================================================== analyses */
+
+.analysis-panel { margin-top: 18px; }
+.matrix-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.matrix-table th, .matrix-table td {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.matrix-table th { background: var(--surface-2); font-size: 11px; font-weight: 600; }
+.matrix-step { font-size: 11.5px; }
+.matrix-step code { font-size: 11px; color: var(--text-3); }
+.cell-outcome {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.cell-ok { background: var(--ok-soft); color: var(--ok); }
+.cell-blocked { background: var(--warn-soft); color: var(--warn); }
+.cell-deadlock { background: var(--danger-soft); color: var(--danger); }
+.cell-timeout { background: var(--warn-soft); color: var(--warn); }
+.cell-error { background: var(--danger-soft); color: var(--danger); }
+.cell-not { background: var(--surface-3); color: var(--text-3); }
+.matrix-table tr.is-differing td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.job-progress { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
+.job-spinner {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+.shrink-removed { margin: 0 0 14px; padding-left: 20px; font-size: 12.5px; color: var(--text-2); }
+.shrink-removed li { margin-bottom: 3px; }

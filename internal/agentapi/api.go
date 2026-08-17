@@ -9,6 +9,7 @@ package agentapi
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -22,13 +23,23 @@ import (
 
 // API bundles the library and run manager behind operations.
 type API struct {
-	lib *casedef.Library
-	mgr *engine.Manager
-	hub *Hub
+	lib  *casedef.Library
+	mgr  *engine.Manager
+	hub  *Hub
+	jobs *Jobs
 }
 
 func New(lib *casedef.Library, mgr *engine.Manager, hub *Hub) *API {
-	return &API{lib: lib, mgr: mgr, hub: hub}
+	return &API{lib: lib, mgr: mgr, hub: hub, jobs: NewJobs()}
+}
+
+// randomBytes is used for job ids.
+func randomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func (a *API) Hub() *Hub { return a.hub }

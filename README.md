@@ -191,6 +191,10 @@ locking read · MVCC consistent reads never blocking and never being blocked.
 secondary index lookup locking both the index entry and the clustered record ·
 a foreign key making a child insert lock the parent row.
 
+**Metadata locks** — one idle transaction stopping `ALTER TABLE`, and every
+reader queuing behind the waiting ALTER. Zero row locks involved, which is
+what makes this class of stall so confusing to diagnose.
+
 **Wire protocol** — prepared statements moving the result set into the binary
 protocol, with the same locking behaviour and a completely different packet
 trace.
@@ -310,6 +314,42 @@ drift apart.
 Configuration is stored in bbolt and versioned. Every save appends a revision;
 restoring copies an old one forward rather than rewriting history, so a base URL
 that used to work is always one click away.
+
+## Analysis
+
+Two background analyses on every scenario's **Analyse** tab, also available as
+MCP tools (`isolation_matrix`, `shrink_scenario`, polled with `get_job`).
+
+**Isolation matrix** runs the scenario once at each of the four isolation
+levels and reports where the outcomes diverge — answering "what would READ
+COMMITTED do here" by doing it rather than reasoning about it. On the UUIDv7
+gap-lock case:
+
+```
+step                        READ UNCOMMITTED  READ COMMITTED  REPEATABLE READ  SERIALIZABLE
+b Insert a brand new booking  ok                ok              blocked          blocked
+```
+
+Note that it compares whether a step *hit a lock wait*, not its final status: a
+blocked step still ends "done" once the other actor commits, so final status
+alone hides exactly the difference the matrix exists to show.
+
+**Minimal reproduction** repeatedly drops steps and re-runs, keeping only those
+still needed to produce the deadlock, timeout or block. It is delta debugging
+against a real server — every candidate is actually executed. On the AB-BA
+deadlock it goes from 8 steps to 6 in 14 attempts, correctly identifying both
+cleanup steps as unnecessary.
+
+## Query plans
+
+Every locking statement carries its `EXPLAIN` output, read on a connection that
+holds no locks of its own. Which index the optimizer picks is what decides what
+gets locked, so the plan is the other half of any explanation involving a full
+scan — the unindexed `UPDATE` reports `type=index, key=PRIMARY`, and the step
+detail spells out what that means for locking.
+
+`INSERT ... VALUES` is deliberately not explained: MySQL returns a dummy row for
+it that would read as a full table scan and be actively misleading.
 
 ## Run history and comparison
 

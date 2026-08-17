@@ -176,6 +176,26 @@
     if (step.last_insert_id) html += stat('Last insert id', step.last_insert_id);
     html += '</div>';
 
+    if (step.plan && step.plan.length) {
+      html += '<div class="panel-subhead">Query plan</div>';
+      html += '<div class="table-wrap"><table class="plan-table"><thead><tr>' +
+        '<th>table</th><th>access</th><th>key</th><th>rows</th><th>extra</th>' +
+        '</tr></thead><tbody>';
+      step.plan.forEach(function (r) {
+        html += '<tr>' +
+          '<td>' + esc(r.table || '—') + '</td>' +
+          '<td><span class="plan-type ' + planClass(r.type) + '">' + esc(r.type || '?') + '</span></td>' +
+          '<td>' + esc(r.key && r.key !== 'NULL' ? r.key : '—') + '</td>' +
+          '<td>' + esc(String(r.rows)) + '</td>' +
+          '<td>' + esc(r.extra || '') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+      step.plan.forEach(function (r) {
+        if (r.explain) html += '<div class="plan-explain">' + esc(r.explain) + '</div>';
+      });
+    }
+
     if (step.columns && step.columns.length && step.rows) {
       html += '<div class="table-wrap"><table class="data"><thead><tr>';
       step.columns.forEach(function (c) { html += '<th>' + esc(c) + '</th>'; });
@@ -193,6 +213,17 @@
     }
 
     host.innerHTML = html;
+  }
+
+  // planClass colours the access path: a full scan is the finding, a unique
+  // lookup is the benign case.
+  function planClass(type) {
+    switch (String(type || '').toLowerCase()) {
+      case 'all': case 'index': return 'is-scan';
+      case 'range': case 'ref': case 'ref_or_null': case 'index_merge': return 'is-range';
+      case 'eq_ref': case 'const': case 'system': return 'is-unique';
+      default: return '';
+    }
   }
 
   function stat(label, value) {
@@ -348,13 +379,31 @@
       }).join('');
     }
 
+    var mdlEl = document.getElementById('locks-mdl');
+    var mdl = snap.metadata_locks || [];
+    if (!mdl.length) {
+      mdlEl.innerHTML = '';
+    } else {
+      mdlEl.innerHTML = '<div class="panel-subhead">Metadata locks</div>' +
+        '<div class="table-wrap">' + mdl.map(function (m) {
+          return '<div class="mdl-row' + (m.status === 'PENDING' ? ' is-pending' : '') + '">' +
+            '<span>' + esc(actorName(m.actor)) + '</span>' +
+            '<span class="mdl-type">' + esc(m.lock_type) + '</span>' +
+            '<span class="mdl-explain">' + esc(m.explain || '') + '</span>' +
+            '<span class="mono">' + esc(m.name || m.object_type) + ' · ' + esc(m.status) + '</span>' +
+            '</div>';
+        }).join('') + '</div>';
+    }
+
     var showGranted = document.getElementById('locks-granted').checked;
     var locks = (snap.locks || []).filter(function (l) {
       return showGranted || l.lock_status !== 'GRANTED';
     });
 
     if (!locks.length) {
-      tableEl.innerHTML = '<div class="dock-empty">No locks are held on this run\'s tables right now.</div>';
+      tableEl.innerHTML = '<div class="dock-empty">No row locks are held right now.' +
+        (mdl.length ? ' The metadata locks above are what is blocking.' : '') + '</div>';
+      setCount('locks', (snap.locks || []).length);
       return;
     }
 

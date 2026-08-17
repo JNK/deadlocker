@@ -417,6 +417,16 @@
       setTimeout(closeMenu, 120);
     });
 
+    // A click anywhere else dismisses the menu. Blur alone does not cover it:
+    // clicking a non-focusable area leaves the textarea focused and the popup
+    // stranded on screen.
+    document.addEventListener('mousedown', function (e) {
+      if (!state.open) return;
+      if (menu.contains(e.target) || e.target === textarea) return;
+      closeMenu();
+    }, true);
+    window.addEventListener('resize', closeMenu);
+
     menu.addEventListener('mousedown', function (e) {
       var item = e.target.closest('.ac-item');
       if (!item) return;

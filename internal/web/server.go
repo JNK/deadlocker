@@ -176,6 +176,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /case/{id}", s.handleCase)
 	mux.HandleFunc("GET /compare", s.handleCompare)
 	mux.HandleFunc("GET /api/history", s.handleHistoryAPI)
+	mux.HandleFunc("POST /api/analyse/{kind}", s.handleAnalyse)
+	mux.HandleFunc("GET /api/job/{id}", s.handleJob)
 	mux.HandleFunc("GET /playground", s.handlePlayground)
 	mux.HandleFunc("POST /playground/validate", s.handleValidate)
 	mux.HandleFunc("POST /playground/save", s.handleSave)
@@ -267,6 +269,7 @@ type pageData struct {
 	Source      string
 	Description template.HTML
 
+	Sequence  []sequenceRow
 	Run       *engine.RunState
 	Steps     []*engine.StepResult
 	CaseSteps []casedef.Step
@@ -298,6 +301,19 @@ type pageData struct {
 }
 
 // historyEntry is one line in the sidebar: a run, live or finished.
+// sequenceRow is one step of a scenario, resolved against its actor so the
+// template does not have to look colours up.
+type sequenceRow struct {
+	Index  int
+	Actor  string
+	Name   string
+	Accent string
+	Label  string
+	SQL    string
+	Note   string
+	Expect string
+}
+
 type historyEntry struct {
 	RunID     string
 	CaseID    string
@@ -403,6 +419,14 @@ func (s *Server) handleCase(w http.ResponseWriter, r *http.Request) {
 	pd.Source = c.Source
 	pd.Description = markdown.Render(c.Description)
 	pd.History = s.mgr.History().ForCase(c.ID)
+	for i, step := range c.Steps {
+		actor, _ := c.Actor(step.Actor)
+		pd.Sequence = append(pd.Sequence, sequenceRow{
+			Index: i + 1, Actor: step.Actor, Name: actor.Name, Accent: actor.Accent,
+			Label: step.Label, SQL: strings.TrimSpace(step.SQL),
+			Note: step.Note, Expect: string(step.Expect),
+		})
+	}
 	s.render(w, "case.html", pd)
 }
 

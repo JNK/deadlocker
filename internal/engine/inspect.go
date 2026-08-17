@@ -59,14 +59,68 @@ type Transaction struct {
 	WaitStarted  string `json:"wait_started,omitempty"`
 }
 
+// MetadataLock is a row of performance_schema.metadata_locks.
+//
+// Metadata locks are the other half of MySQL blocking: they are why an ALTER
+// TABLE sits behind a transaction that merely read the table, which no amount
+// of staring at data_locks will explain.
+type MetadataLock struct {
+	Actor    string `json:"actor"`
+	ThreadID uint64 `json:"thread_id"`
+	Type     string `json:"object_type"`
+	Schema   string `json:"schema"`
+	Name     string `json:"name"`
+	LockType string `json:"lock_type"`
+	Duration string `json:"duration"`
+	Status   string `json:"status"`
+	Explain  string `json:"explain"`
+}
+
 // LockSnapshot is everything we know about lock state at one instant.
 type LockSnapshot struct {
-	At           time.Time     `json:"at"`
-	Locks        []Lock        `json:"locks"`
-	Waits        []LockWait    `json:"waits"`
-	Transactions []Transaction `json:"transactions"`
-	Err          string        `json:"err,omitempty"`
+	At            time.Time      `json:"at"`
+	Locks         []Lock         `json:"locks"`
+	Waits         []LockWait     `json:"waits"`
+	Transactions  []Transaction  `json:"transactions"`
+	MetadataLocks []MetadataLock `json:"metadata_locks,omitempty"`
+	Err           string         `json:"err,omitempty"`
 }
+
+// explainMDL renders a metadata lock type in terms of what it blocks.
+func explainMDL(lockType, status string) string {
+	if strings.EqualFold(status, "PENDING") {
+		return "Waiting for this metadata lock. Everything queued behind it waits too, including plain reads — an MDL queue is strictly ordered."
+	}
+	switch strings.ToUpper(lockType) {
+	case "SHARED_READ":
+		return "Held by a transaction reading this table. Harmless against other readers, but it blocks any ALTER TABLE until the transaction ends."
+	case "SHARED_WRITE":
+		return "Held by a transaction writing to this table. Blocks schema changes until it commits."
+	case "EXCLUSIVE":
+		return "An exclusive metadata lock: a schema change holds this, and every statement touching the table waits."
+	case "SHARED_UPGRADABLE":
+		return "Held during the copy phase of an online DDL; it upgrades to exclusive at the end, which is when brief stalls appear."
+	case "INTENTION_EXCLUSIVE":
+		return "A table-scope intention lock, taken before writing. Ordinary and not usually a source of blocking."
+	case "SHARED_NO_READ_WRITE", "SHARED_NO_WRITE":
+		return "A restrictive metadata lock taken by DDL; readers or writers wait behind it."
+	}
+	return "Metadata lock " + lockType + " on this object."
+}
+
+const metadataLocksQuery = `
+SELECT
+    COALESCE(t.PROCESSLIST_ID, 0)     AS conn_id,
+    ml.OBJECT_TYPE                    AS object_type,
+    COALESCE(ml.OBJECT_SCHEMA, '')    AS obj_schema,
+    COALESCE(ml.OBJECT_NAME, '')      AS obj_name,
+    ml.LOCK_TYPE                      AS lock_type,
+    ml.LOCK_DURATION                  AS lock_duration,
+    ml.LOCK_STATUS                    AS lock_status
+FROM performance_schema.metadata_locks ml
+LEFT JOIN performance_schema.threads t ON t.THREAD_ID = ml.OWNER_THREAD_ID
+WHERE ml.OBJECT_SCHEMA = ?
+ORDER BY ml.LOCK_STATUS DESC, conn_id`
 
 // explainLockMode renders a lock mode as a sentence. The gap-lock cases carry
 // the explanation people actually need when a SELECT ... FOR UPDATE on a
@@ -225,6 +279,28 @@ func Snapshot(ctx context.Context, db *sql.DB, schema string, actorByConnID map[
 			snap.Waits = append(snap.Waits, w)
 		}
 		wrows.Close()
+	}
+
+	// Metadata locks are optional: the mdl instrument can be switched off, and
+	// a scenario is still perfectly readable without them.
+	if mrows, mErr := db.QueryContext(ctx, metadataLocksQuery, schema); mErr == nil {
+		for mrows.Next() {
+			var m MetadataLock
+			var connID uint64
+			if err := mrows.Scan(&connID, &m.Type, &m.Schema, &m.Name,
+				&m.LockType, &m.Duration, &m.Status); err != nil {
+				break
+			}
+			m.ThreadID = connID
+			m.Actor = actorByConnID[connID]
+			// Only this run's sessions; the server has plenty of its own.
+			if m.Actor == "" {
+				continue
+			}
+			m.Explain = explainMDL(m.LockType, m.Status)
+			snap.MetadataLocks = append(snap.MetadataLocks, m)
+		}
+		mrows.Close()
 	}
 
 	trows, err := db.QueryContext(ctx, trxQuery)

@@ -35,6 +35,7 @@
         <button class="tab is-active" data-tab="overview" type="button">Overview</button>
         <button class="tab" data-tab="sequence" type="button">Sequence</button>
         <button class="tab" data-tab="history" type="button">History {{if .History}}<span class="tab-count">({{len .History}})</span>{{end}}</button>
+        <button class="tab" data-tab="analyse" type="button">Analyse</button>
         <button class="tab" data-tab="source" type="button">Source</button>
       </nav>
     </header>
@@ -76,16 +77,27 @@
 
       <section class="tab-panel" data-panel="sequence">
         <div class="panel">
-          <div class="panel-head"><h2>Sequence</h2><span class="muted">{{len .Case.Steps}} steps</span></div>
-          <div class="panel-body">
-            <ol class="step-list">
-              {{range $i, $s := .Case.Steps}}
-              <li>
-                <span class="step-num">{{add $i 1}}</span>
-                <span class="step-actor">{{$s.Actor}}</span>
-                <code class="step-sql">{{shortSQL $s.SQL}}</code>
-                {{template "expect-badge" $s.Expect}}
-                {{if $s.Note}}<p class="step-note">{{$s.Note}}</p>{{end}}
+          <div class="panel-head">
+            <h2>Sequence</h2>
+            <span class="muted">{{len .Case.Steps}} steps · one column per actor</span>
+          </div>
+          <div class="panel-body panel-body-flush">
+            <ol class="sequence">
+              {{range .Sequence}}
+              <li class="seq-step accent-{{.Accent}}">
+                <div class="seq-rail">
+                  <span class="seq-num">{{.Index}}</span>
+                  <span class="seq-line"></span>
+                </div>
+                <div class="seq-body">
+                  <div class="seq-head">
+                    <span class="seq-actor"><span class="actor-dot"></span>{{.Name}}</span>
+                    <span class="seq-label">{{.Label}}</span>
+                    {{if .Expect}}<span class="steps-expect">expects {{.Expect}}</span>{{end}}
+                  </div>
+                  <pre class="seq-sql">{{.SQL}}</pre>
+                  {{if .Note}}<p class="seq-note">{{.Note}}</p>{{end}}
+                </div>
               </li>
               {{end}}
             </ol>
@@ -138,6 +150,36 @@
         </div>
       </section>
 
+      <section class="tab-panel" data-panel="analyse">
+        <div class="panel">
+          <div class="panel-head"><h2>Isolation matrix</h2></div>
+          <div class="panel-body">
+            <p class="muted" style="margin-top:0">
+              Runs this scenario once at each isolation level and reports where the outcomes
+              diverge — answering "what would READ COMMITTED do here" by doing it. Takes
+              tens of seconds: four real runs.
+            </p>
+            <button class="btn btn-primary" data-analyse="isolation"
+                    data-scenario="{{.Case.ID}}">Run the sweep</button>
+            <div class="analysis-panel" id="matrix-out"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Minimal reproduction</h2></div>
+          <div class="panel-body">
+            <p class="muted" style="margin-top:0">
+              Repeatedly drops steps and re-runs, keeping only those still needed to produce
+              the deadlock, timeout or block. Turns a messy reproduction into the smallest
+              sequence that still demonstrates it.
+            </p>
+            <button class="btn btn-primary" data-analyse="shrink"
+                    data-scenario="{{.Case.ID}}">Shrink it</button>
+            <div class="analysis-panel" id="shrink-out"></div>
+          </div>
+        </div>
+      </section>
+
       <section class="tab-panel" data-panel="source">
         <div class="panel">
           <div class="panel-head">
@@ -167,6 +209,7 @@
 <script src="/static/yaml.js"></script>
 <script src="/static/runpane.js"></script>
 <script src="/static/case.js"></script>
+<script src="/static/analyse.js"></script>
 {{template "assistant-mount" .}}
 </body>
 </html>

@@ -451,6 +451,56 @@
     });
   }
 
+  // Sessions live on the server; the browser only needs to remember which one
+  // it was using, so a reload lands back in the same conversation instead of
+  // starting a blank one.
+  function sessionKey(mode, scenarioID) {
+    return 'dl-chat-' + mode + '-' + (scenarioID || '');
+  }
+
+  function rememberSession(mode, scenarioID, id) {
+    try { sessionStorage.setItem(sessionKey(mode, scenarioID), id); } catch (e) {}
+  }
+
+  function forgetSession(mode, scenarioID) {
+    try { sessionStorage.removeItem(sessionKey(mode, scenarioID)); } catch (e) {}
+  }
+
+  // resumeSession returns the stored session if the server still has it.
+  function resumeSession(mode, scenarioID) {
+    var id;
+    try { id = sessionStorage.getItem(sessionKey(mode, scenarioID)); } catch (e) { id = null; }
+    if (!id) return Promise.resolve(null);
+    return fetch('/api/chat/' + id)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (res) {
+        if (!res || !res.ok) { forgetSession(mode, scenarioID); return null; }
+        return res;
+      })
+      .catch(function () { return null; });
+  }
+
+  // openSession resumes where the conversation left off, or starts a new one.
+  function openSession(mode, scenarioID, runID) {
+    return resumeSession(mode, scenarioID).then(function (existing) {
+      if (existing) { existing.resumed = true; return existing; }
+      return createSession(mode, scenarioID, runID).then(function (res) {
+        if (res && res.ok) rememberSession(mode, scenarioID, res.session);
+        return res;
+      });
+    });
+  }
+
+  // replay redraws a stored transcript. Tool activity is not kept, so the
+  // resumed view shows the conversation rather than a full re-enactment.
+  function replay(log, transcript) {
+    (transcript || []).forEach(function (turn) {
+      if (turn.role === 'user') log.user(turn.text);
+      else if (turn.text) log.appendText(turn.text);
+      log.breakText();
+    });
+  }
+
   function chatStatus() {
     return fetch('/api/chat/status').then(function (r) { return r.json(); });
   }
@@ -575,6 +625,9 @@
     Composer: Composer,
     runTurn: runTurn,
     createSession: createSession,
+    openSession: openSession,
+    forgetSession: forgetSession,
+    replay: replay,
     status: chatStatus,
     wireSuggestions: wireSuggestions,
     loadSuggestions: loadSuggestions,

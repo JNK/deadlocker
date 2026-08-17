@@ -101,6 +101,22 @@ type Case struct {
 	Ephemeral bool `yaml:"-" json:"ephemeral,omitempty"`
 }
 
+// Marshal renders a case back to YAML. Comments and original formatting are
+// lost, so this is for generated scenarios -- a minimised repro, say -- rather
+// than for round-tripping a file someone wrote.
+func Marshal(c *Case) ([]byte, error) {
+	var buf strings.Builder
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(c); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
+}
+
 // Parse decodes and validates a case from YAML.
 func Parse(data []byte) (*Case, error) {
 	var c Case
