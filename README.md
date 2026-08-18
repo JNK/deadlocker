@@ -8,6 +8,15 @@ Built because "a `SELECT ... FOR UPDATE` on an id that does not exist took a gap
 lock and blocked every insert" is a sentence that is much easier to believe once
 you have seen it happen.
 
+![Stepping through a scenario, with the lock table underneath](docs/screenshots/mid-flow.png)
+
+*A run in flight. One column per actor, each on its own connection; in step 5
+Session B asked for a row Session A holds, was marked blocked, and four seconds
+later came back as error 1205 — the step keeps both facts, and both match what
+the scenario declared. Underneath, the Locks tab: what changed since the last
+snapshot, the metadata locks nobody asks about, and every lock mode read back as
+a sentence.*
+
 ## What it does
 
 - **Spawns its own MySQL** in Docker (8.4 by default) and manages the whole
@@ -30,6 +39,10 @@ you have seen it happen.
   step.
 - **Streams the container log**, with InnoDB's `LATEST DETECTED DEADLOCK`
   report pulled out into its own tab (`innodb_print_all_deadlocks` is on).
+- **Takes typed SQL** against a live run, on any actor's connection — inside
+  whatever transaction it has open — or on a standalone connection you open on
+  the spot. A scenario is a fixed sequence, and the question a fixed sequence
+  provokes is always "what if".
 - **Checks the scenario's claims.** Each step can declare `expect: blocks` or
   `expect: deadlock`; the UI marks every step as matching or not. A scenario is
   a falsifiable statement about MySQL, not a story.
@@ -73,9 +86,30 @@ mismatch points at the exact statement rather than at the file. Progress goes to
 stderr and the report to stdout, so piping `-format json` gives something a
 parser will accept.
 
+## Installing it
+
+On macOS, from the tap:
+
+```sh
+brew tap jnk/deadlocker https://github.com/JNK/deadlocker
+brew install --cask deadlocker
+```
+
+That installs the signed, notarized universal build published with each release
+— the same `.pkg` you can download by hand from the
+[releases page](https://github.com/JNK/deadlocker/releases). It writes one file,
+`~/.local/bin/deadlocker`, needs no administrator password, and `brew uninstall
+--cask deadlocker` takes it away again.
+
+Or build it yourself, anywhere Go runs:
+
+```sh
+go install github.com/jnk/deadlocker/cmd/deadlocker@latest
+```
+
 ## Running it
 
-Requires Go 1.22+ and a running Docker daemon.
+Requires Go 1.22+ to build, and a running Docker daemon to use.
 
 ```sh
 go run ./cmd/deadlocker
@@ -83,12 +117,16 @@ go run ./cmd/deadlocker
 ```
 
 The first run pulls `mysql:8.4` and waits for it to initialise, which takes a
-minute or so. After that the container is reused, and each run just gets a fresh
-scratch database that is dropped when the run closes.
+minute or so. Pressing **Run** opens the run page immediately and reports what
+it is waiting for — the pull with a percentage across all layers, the container
+starting, then mysqld coming up — rather than leaving a button to be stared at.
+After that the container is reused, and each run just gets a fresh scratch
+database that is dropped when the run closes.
 
-The scenario library ships inside the binary. On start it is copied into the
-case directory, creating it if necessary; files that already exist are never
-overwritten, so your edits are safe.
+The scenario library ships inside the binary but is not written to disk unless
+you ask: the library page offers the import while it is empty, **Settings →
+Library** offers it always, and `-seed` does it for scripts. Files that already
+exist are never overwritten, so your edits are safe.
 
 Flags:
 
@@ -99,12 +137,35 @@ Flags:
 | `-settle` | `400ms` | how long a statement may run before it is reported as blocked |
 | `-prewarm` | — | boot an image at startup instead of on first run, e.g. `mysql:8.4` |
 | `-keep-stale` | `false` | do not reap containers left by a previous session |
-| `-state` | `<cases>/../.deadlocker/state.db` | bbolt file holding the versioned configuration |
+| `-state` | `~/.config/deadlocker/state.db` | bbolt file holding the versioned configuration |
 
 Everything is embedded in the binary — templates, CSS, JavaScript. There is no
 build step and no npm.
 
+### Where state lives
+
+Configuration — the model endpoint, the API key, the prewarm setting — and the
+scenario revision history live in `~/.config/deadlocker/state.db`
+(`$XDG_CONFIG_HOME` is honoured). They are per user, not per project: settings
+that vanish because you started the tool from a different directory are settings
+you have to set twice. A state file left over in the old per-project location is
+moved there on first start.
+
+Run history is **not** in that file and does not survive a restart. A run holds
+open connections and a scratch database; the log is what you did this session,
+and the honest lifetime of that is the session.
+
+The same directory holds one lock file per running instance, which is how a
+second Deadlocker — or `deadlocker run` while the UI is open — knows which
+containers belong to someone else and leaves them alone.
+
 ## Using the UI
+
+![The scenario library, filtered](docs/screenshots/overview.png)
+
+*The library, filtered to `rec`. Scenarios are grouped by category and carry
+their actor count, step count, isolation level and tags; the sidebar is a live
+run log, so anything still open is one click away from wherever you are.*
 
 <kbd>⌘K</kbd> (<kbd>Ctrl K</kbd> elsewhere), or **Search** in the sidebar
 footer, opens the command palette, which
@@ -159,9 +220,9 @@ to come next.
 
 The dock at the bottom has: the selected step's result or error (with a note on
 what the error actually did to your transaction), the live lock table with the
-wait-for graph, the decoded packet stream, the container log, and the InnoDB
-deadlock report. It collapses to its tab bar when you want the timeline
-full-height, and remembers that.
+wait-for graph, a SQL console on the run's own connections, the decoded packet
+stream, the container log, and the InnoDB deadlock report. It collapses to its
+tab bar when you want the timeline full-height, and remembers that.
 
 The **Locks** tab draws the wait-for graph — one node per actor, one arrow per
 wait edge, the cycle highlighted when one closes. That graph *is* what InnoDB's
@@ -173,6 +234,22 @@ locks taken, released, and moved between waiting and granted — because the
 question while stepping is what the last statement did, not what is held now.
 Underneath it, the transaction table carries `rows_locked` and `rows_modified`,
 which is roughly what InnoDB weighs when picking a deadlock victim.
+
+The **SQL** tab is a console on the run in front of you. Pick where a statement
+goes: an actor's connection, where it lands inside that actor's open transaction
+and takes locks under its name, or a standalone connection opened with **New
+connection** — the difference between those two is most of what isolation means,
+so both are offered rather than one being chosen for you. A standalone session
+is configured exactly like an actor (same isolation level, lock wait timeout and
+session variables) and appears in the lock table, the transaction list and the
+wait-for graph like anything else, because a console you cannot see the effects
+of would be a way to make a run lie about itself.
+
+Statements get everything a step gets: the query plan, the settle window, the
+wait explanation when they block, and the hint about what a deadlock or timeout
+did to the transaction. <kbd>Enter</kbd> runs, <kbd>Shift Enter</kbd> is a
+newline, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and the packets show up in
+the Wire tab filed under `console`.
 
 **Predict mode**, beside the Step button, withholds the scenario's declared
 expectation and asks you to guess before each step, then scores you. Every
@@ -191,6 +268,14 @@ Scenarios live in `cases/`, one YAML file each, organised into folders that
 become categories. The playground (**New scenario**) is the fast path: edit,
 **Run**, and only **Save** once it earns a place in the library.
 
+![A scenario's sequence view](docs/screenshots/details.png)
+
+*What a written scenario reads like: numbered steps, one column per actor, each
+carrying the statement, what it is expected to do (`expects ok`, `expects
+blocks`) and a note saying why. The tabs beside it are the same scenario as an
+overview, a run history, three analyses, its YAML source, and every revision it
+has been through.*
+
 ```yaml
 name: SELECT FOR UPDATE on a missing row blocks the next insert
 category: Gap locks          # defaults to the folder name
@@ -202,7 +287,7 @@ mysql:
   image: mysql:8.4
   isolation: REPEATABLE READ   # READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SERIALIZABLE
   lock_wait_timeout: 300       # innodb_lock_wait_timeout, per session, seconds
-  deadlock_detect: true        # global; false turns deadlocks into timeouts
+  deadlock_detect: true        # false turns deadlocks into timeouts, on a container of its own
   prepared: false              # true: COM_STMT_PREPARE/EXECUTE and binary result rows
   vars:                        # extra SET SESSION variables
     sql_mode: STRICT_ALL_TABLES
@@ -412,8 +497,12 @@ go test ./...
   `COM_QUERY` rather than a binary `COM_STMT_EXECUTE`.
 - **Setup and introspection bypass the proxy** on a separate admin connection,
   so they never pollute the packet timeline.
-- **`deadlock_detect` is a global.** A scenario that sets it affects the shared
-  container for the duration of the run; it is restored on close.
+- **`deadlock_detect` gets its own container.** MySQL only exposes it globally,
+  so a scenario that turns it off runs on a server started with
+  `--innodb-deadlock-detect=OFF` rather than reaching over and changing the one
+  everything else is using. Setting it with `SET GLOBAL` silently converted
+  every concurrent run's deadlocks into lock waits; now no run can reconfigure
+  another's server, and two runs of any two scenarios are independent.
 - **Teardown kills blocked connections** with `KILL CONNECTION` before closing
   them — a connection parked on a lock wait will not respond to a polite close.
 
@@ -460,6 +549,15 @@ Optional, and hidden entirely until configured — Deadlocker is fully usable
 without it. Configure it in **Settings**: an OpenAI-compatible base URL (Ollama,
 LM Studio, llama.cpp, vLLM, or a remote gateway), an optional API key, and a
 model chosen from a dropdown populated by querying the endpoint.
+
+![The scenario builder, mid-conversation](docs/screenshots/ai-flow-builder.png)
+
+*The builder, running a local `qwen3.5-small-think`. The conversation on the
+left is the model's actual tool calls — browsing the library, reading a
+scenario, running it — and its summary is a report of what the run did, not a
+claim about MySQL. On the right the scenario takes shape step by step, with
+**Test run** to play it then and there and **Save to library** when it earns a
+place — at which point it is a YAML file in `cases/` like any other.*
 
 Two separate surfaces, because they are different jobs:
 
@@ -541,6 +639,14 @@ pre-warm costs nothing: every run starts its own container on demand regardless.
 `-prewarm` does the same thing for scripts, and overrides the setting.
 
 ## Analysis
+
+![The isolation matrix on a range-scan scenario](docs/screenshots/analysis.png)
+
+*The isolation matrix, run on the range-scan scenario: four real runs, one per
+isolation level, reduced to the one row where they disagree — the insert inside
+the range blocks under REPEATABLE READ and SERIALIZABLE and sails through under
+the other two. Every analysis keeps a permanent URL, and the sidebar lists the
+ones already done.*
 
 Three background analyses on every scenario's **Analyse** tab, also available as
 MCP tools (`isolation_matrix`, `version_matrix`, `shrink_scenario`, polled with
