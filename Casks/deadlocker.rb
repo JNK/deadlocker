@@ -13,7 +13,9 @@ cask "deadlocker" do
   desc "MySQL lock playground: provoke a deadlock and read the locks that caused it"
   homepage "https://github.com/JNK/deadlocker"
 
-  depends_on macos: ">= :big_sur"
+  # A bare symbol means "this version or newer"; the string comparison form is
+  # deprecated.
+  depends_on macos: :big_sur
 
   pkg "Deadlocker-v#{version}.pkg"
 
