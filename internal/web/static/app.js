@@ -22,16 +22,22 @@
     });
   }
 
-  // ------------------------------------------------------- sidebar filter
+  // ------------------------------------------------------- library filter
+  // Two filters that compose: free text, and origin. A card has to satisfy both
+  // to stay, and a category whose cards have all gone goes with them.
   var filter = document.getElementById('case-filter');
-  if (filter) {
+  var originBtns = document.querySelectorAll('[data-origin]:not([data-case])');
+  if (filter || originBtns.length) {
+    var origin = 'all';
+
     var apply = function () {
-      var q = filter.value.trim().toLowerCase();
+      var q = filter ? filter.value.trim().toLowerCase() : '';
       document.querySelectorAll('[data-case]').forEach(function (el) {
         var hay = (el.dataset.name || el.textContent || '').toLowerCase();
-        el.classList.toggle('is-hidden', q !== '' && hay.indexOf(q) === -1);
+        var textOK = q === '' || hay.indexOf(q) !== -1;
+        var originOK = origin === 'all' || el.dataset.origin === origin;
+        el.classList.toggle('is-hidden', !(textOK && originOK));
       });
-      // Hide category headings that no longer have visible children.
       document.querySelectorAll('[data-group]').forEach(function (group) {
         var anyVisible = Array.prototype.some.call(
           group.querySelectorAll('[data-case]'),
@@ -39,16 +45,47 @@
         );
         group.classList.toggle('is-hidden', !anyVisible);
       });
-    };
-    filter.addEventListener('input', apply);
-    // "/" focuses the filter, as long as we are not already typing somewhere.
-    document.addEventListener('keydown', function (e) {
-      if (e.key === '/' && !isTypingTarget(e.target)) {
-        e.preventDefault();
-        filter.focus();
-        filter.select();
+      var empty = document.getElementById('library-empty');
+      if (empty) {
+        empty.hidden = !!document.querySelector('[data-case]:not(.is-hidden)');
       }
+    };
+
+    // The counts are computed from the page rather than passed down, so they
+    // cannot disagree with what is actually rendered.
+    (function countOrigins() {
+      var totals = { all: 0, builtin: 0, custom: 0 };
+      document.querySelectorAll('[data-case]').forEach(function (el) {
+        totals.all++;
+        if (totals[el.dataset.origin] !== undefined) totals[el.dataset.origin]++;
+      });
+      document.querySelectorAll('[data-origin-count]').forEach(function (el) {
+        var n = totals[el.dataset.originCount];
+        el.textContent = n ? String(n) : '0';
+      });
+    })();
+
+    originBtns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        origin = btn.dataset.origin;
+        originBtns.forEach(function (b) {
+          b.classList.toggle('is-active', b === btn);
+        });
+        apply();
+      });
     });
+
+    if (filter) {
+      filter.addEventListener('input', apply);
+      // "/" focuses the filter, as long as we are not already typing somewhere.
+      document.addEventListener('keydown', function (e) {
+        if (e.key === '/' && !isTypingTarget(e.target)) {
+          e.preventDefault();
+          filter.focus();
+          filter.select();
+        }
+      });
+    }
   }
 
   // ------------------------------------------------- submit busy feedback
@@ -152,11 +189,13 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   };
 
-  window.DL.postJSON = function (url, body) {
+  // raw sends the body as-is rather than JSON-encoding it, for endpoints that
+  // take a whole file.
+  window.DL.postJSON = function (url, body, raw) {
     return fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body === undefined ? '{}' : JSON.stringify(body)
+      headers: { 'Content-Type': raw ? 'text/plain' : 'application/json' },
+      body: raw ? body : (body === undefined ? '{}' : JSON.stringify(body))
     }).then(function (r) { return r.json(); });
   };
 

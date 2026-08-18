@@ -20,6 +20,26 @@
         </div>
       </div>
       <div class="page-actions">
+        <!-- Export is a plain link, so "save as" and "copy link" both work.
+             The bundle carries the run history, for when the point is what it
+             did rather than what it says. -->
+        <details class="menu">
+          <summary class="btn btn-ghost">Export</summary>
+          <div class="menu-panel">
+            <a class="menu-item" href="/api/case/{{.Case.ID}}/export" download>
+              <strong>Scenario YAML</strong>
+              <span>The file itself — the most shareable form.</span>
+            </a>
+            <a class="menu-item" href="/api/case/{{.Case.ID}}/export?history=1" download>
+              <strong>Bundle with run history</strong>
+              <span>The scenario plus what it did here, as JSON.</span>
+            </a>
+            <a class="menu-item" href="/api/case/{{.Case.ID}}/export?history=1&amp;versions=1" download>
+              <strong>Bundle with history and versions</strong>
+              <span>Everything, including how the scenario got here.</span>
+            </a>
+          </div>
+        </details>
         <a class="btn btn-ghost" href="/edit/{{.Case.ID}}">Edit</a>
         {{if .ChatReady}}<button class="btn btn-ghost" type="button" data-builder data-scenario="{{.Case.ID}}">Edit with assistant</button>{{end}}
         <form method="post" action="/run">

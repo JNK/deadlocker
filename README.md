@@ -115,11 +115,29 @@ menu. Ranking prefers a title prefix over a mid-word hit over a subsequence, so
 typing `gap` lands on the scenario named after gap locks rather than one that
 merely mentions them.
 
+The library filters two ways at once: free text, and origin — **built in** vs
+**custom**, since the shipped scenarios are documentation and your own are work.
+Category headings stick as you scroll.
+
+**Import** a scenario by dropping a file anywhere on the library page: a bare
+`.yaml`, or a `.deadlocker.json` bundle someone exported. Importing never
+overwrites — a name that is taken gets a suffix. **Export** is on each scenario:
+the YAML on its own, or a bundle carrying the run history and version history
+too, for when the point is what it did rather than what it says.
+
 The sidebar is a run log: it keeps up to 500 runs, shows the count, and each
 row has a trash can to drop it. Removing a run that is still open closes it and
 drops its scratch database, so that one asks first; a finished run is one line
 in a list and goes without ceremony. **Clear** at the top empties the log but
-leaves anything still running alone.
+leaves anything still running alone. Deletions are broadcast, so a second tab
+does not keep offering a run that is gone.
+
+**Compare** in the footer turns the log into a picker: tick two runs and go.
+Escape backs out.
+
+Runs that have aged out, and scenarios that have been deleted or renamed, get a
+proper page rather than a bare 404 — the sidebar is still there, because what
+you want next is almost always another run.
 
 **Step** submits the next statement. **Play** runs until the scenario ends or an
 actor blocks. <kbd>Space</kbd> steps, <kbd>↑</kbd>/<kbd>↓</kbd> move between
@@ -456,6 +474,16 @@ file.
 
 The YAML file on disk stays the source of truth; the store is a record of what
 it used to say, not a second place to read the current scenario from.
+
+## Starting MySQL early
+
+Pulling and initialising MySQL takes tens of seconds the first time, and paying
+that while you are waiting to see a lock is the worst possible moment for it.
+**Settings → MySQL container** starts the image when the app starts instead. It
+runs in its own goroutine, so the UI is up immediately either way, and a failed
+pre-warm costs nothing: every run starts its own container on demand regardless.
+
+`-prewarm` does the same thing for scripts, and overrides the setting.
 
 ## Analysis
 

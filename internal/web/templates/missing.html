@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="shell">
+  {{template "sidebar" .}}
+  <main class="main">
+    <header class="page-header page-header-sticky">
+      <div class="page-header-main">
+        <div class="crumb"><a href="/">Scenarios</a></div>
+        <h1>{{.Missing.Title}}</h1>
+      </div>
+    </header>
+
+    <!-- Deliberately a full page with the sidebar intact rather than a bare
+         404: what you most likely want next is another run, and they are all
+         right there. -->
+    <section class="missing">
+      <div class="missing-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/>
+        </svg>
+      </div>
+      <h2>{{.Missing.Heading}}</h2>
+      <p>{{.Missing.Body}}</p>
+      {{if .Missing.ID}}<p class="missing-id mono">{{.Missing.ID}}</p>{{end}}
+      <div class="missing-actions">
+        {{range .Missing.Actions}}
+        <a class="btn {{if .Primary}}btn-primary{{else}}btn-ghost{{end}}" href="{{.URL}}">{{.Label}}</a>
+        {{end}}
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script src="/static/dialog.js"></script>
+<script src="/static/palette.js"></script>
+<script src="/static/activity.js"></script>
+<script src="/static/sidebar.js"></script>
+<script src="/static/yaml.js"></script>
+<script src="/static/runpane.js"></script>
+{{template "assistant-mount" .}}
+</body>
+</html>

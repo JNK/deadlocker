@@ -41,13 +41,22 @@
 
     d.querySelector('.dl-dialog-title').textContent = opts.title || 'Are you sure?';
     var body = d.querySelector('.dl-dialog-body');
-    body.textContent = opts.body || '';
-    body.hidden = !opts.body;
+    // bodyHTML is for callers that need structure -- a list of imported files,
+    // say. Everything in it is the caller's responsibility to escape.
+    if (opts.bodyHTML) {
+      body.innerHTML = opts.bodyHTML;
+    } else {
+      body.textContent = opts.body || '';
+    }
+    body.hidden = !(opts.body || opts.bodyHTML);
 
     var confirmBtn = d.querySelector('.dl-dialog-confirm');
     var cancelBtn = d.querySelector('.dl-dialog-cancel');
     confirmBtn.textContent = opts.confirm || 'Confirm';
+    // An empty cancel label means there is nothing to cancel: the dialog is
+    // telling you something rather than asking.
     cancelBtn.textContent = opts.cancel || 'Cancel';
+    cancelBtn.hidden = opts.cancel === '';
     confirmBtn.classList.toggle('btn-danger', !!opts.danger);
     confirmBtn.classList.toggle('btn-primary', !opts.danger);
 

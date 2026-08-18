@@ -216,6 +216,11 @@ func (s *Server) Routes() http.Handler {
 	// The command palette's whole index, matched in the browser.
 	mux.HandleFunc("GET /api/palette", s.handlePalette)
 
+	// Sharing a scenario: out as YAML or as a bundle with its runs, in from a
+	// file dropped anywhere on the library page.
+	mux.HandleFunc("GET /api/case/{id}/export", s.handleExportScenario)
+	mux.HandleFunc("POST /api/import", s.handleImportScenario)
+
 	// Scenario history. Every save is recorded, so an edit that turns out to be
 	// wrong is one click away from being undone.
 	mux.HandleFunc("GET /api/case/{id}/versions", s.handleScenarioVersions)
@@ -256,7 +261,7 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	pd := s.base("", "library")
 	c, ok := s.lib.Get(r.PathValue("id"))
 	if !ok {
-		http.NotFound(w, r)
+		s.renderMissing(w, "library", missingScenario(r.PathValue("id")))
 		return
 	}
 	pd.Title = "Edit " + c.Name
@@ -302,10 +307,13 @@ type pageData struct {
 	// ArchivedOutcome is the recorded one-word verdict. The page shows it so it
 	// cannot disagree with what the sidebar says about the same run.
 	ArchivedOutcome string
-	ArchivedLocks   *engine.LockSnapshot
-	Steps           []*engine.StepResult
-	CaseSteps       []casedef.Step
-	Settle          int64
+
+	// Missing describes something that is not there, rendered as a full page.
+	Missing       *missingPage
+	ArchivedLocks *engine.LockSnapshot
+	Steps         []*engine.StepResult
+	CaseSteps     []casedef.Step
+	Settle        int64
 
 	Analyses   []*agentapi.Job
 	Job        *agentapi.Job
@@ -360,6 +368,51 @@ type historyEntry struct {
 	Total     int       `json:"total"`
 	StartedAt time.Time `json:"started_at"`
 	Live      bool      `json:"live"`
+}
+
+// missingPage explains something that no longer exists.
+//
+// A run log that keeps 500 entries will outlive some of what it points at:
+// runs age out, scenarios get deleted or renamed. A bare 404 in that situation
+// is unhelpfully blunt, so this renders a real page with the sidebar intact —
+// what you want next is almost always another run, and they are all right
+// there.
+type missingPage struct {
+	Title   string
+	Heading string
+	Body    string
+	ID      string
+	Actions []missingAction
+}
+
+type missingAction struct {
+	Label   string
+	URL     string
+	Primary bool
+}
+
+// missingScenario is the page for a scenario that is not in the library. The
+// most common cause is a link from a run that outlived the file it came from.
+func missingScenario(id string) missingPage {
+	return missingPage{
+		Title:   "Scenario not found",
+		Heading: "This scenario is not in the library",
+		Body: "The file may have been renamed, moved out of the case directory, or " +
+			"deleted. Runs of it can outlive it, so a link from the run log can land here.",
+		ID: id,
+		Actions: []missingAction{
+			{Label: "Browse scenarios", URL: "/", Primary: true},
+			{Label: "Write a new one", URL: "/playground"},
+		},
+	}
+}
+
+// renderMissing writes a 404 as a full page.
+func (s *Server) renderMissing(w http.ResponseWriter, nav string, m missingPage) {
+	pd := s.base(m.Title, nav)
+	pd.Missing = &m
+	w.WriteHeader(http.StatusNotFound)
+	s.render(w, "missing.html", pd)
 }
 
 // sidebarRunLimit is how many runs the log shows. It matches the engine's own
@@ -462,7 +515,7 @@ func (s *Server) handleCase(w http.ResponseWriter, r *http.Request) {
 
 	c, ok := s.lib.Get(r.PathValue("id"))
 	if !ok {
-		http.NotFound(w, r)
+		s.renderMissing(w, "library", missingScenario(r.PathValue("id")))
 		return
 	}
 	pd.Title = c.Name
@@ -665,7 +718,17 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 			s.renderArchivedRun(w, rec)
 			return
 		}
-		http.NotFound(w, r)
+		s.renderMissing(w, "run", missingPage{
+			Title:   "Run not found",
+			Heading: "This run is gone",
+			Body: "It was removed from the log, or it aged out — only the most recent " +
+				"runs are kept, and the log does not survive a restart.",
+			ID: id,
+			Actions: []missingAction{
+				{Label: "Browse scenarios", URL: "/", Primary: true},
+				{Label: "Compare runs", URL: "/compare"},
+			},
+		})
 		return
 	}
 	st := run.State()
@@ -947,7 +1010,14 @@ func (s *Server) handleJobsAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAnalysisPage(w http.ResponseWriter, r *http.Request) {
 	out, err := s.api.GetJob(r.Context(), agentapi.GetJobInput{JobID: r.PathValue("id")})
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderMissing(w, "library", missingPage{
+			Title:   "Analysis not found",
+			Heading: "This analysis is gone",
+			Body: "Analyses are kept in memory for the session and do not survive a " +
+				"restart. Run the sweep again from the scenario's Analyse tab.",
+			ID:      r.PathValue("id"),
+			Actions: []missingAction{{Label: "Browse scenarios", URL: "/", Primary: true}},
+		})
 		return
 	}
 	pd := s.base(out.Job.Name, "analysis")

@@ -143,6 +143,33 @@
 
       <div>
         <div class="panel">
+          <div class="panel-head"><h2>MySQL container</h2></div>
+          <div class="panel-body">
+            <label class="field-row">
+              <input type="checkbox" id="cfg-prewarm" {{if .Config.MySQL.Prewarm}}checked{{end}}>
+              <span>
+                <strong>Start MySQL when the app starts</strong>
+                <small>
+                  Pulling and initialising MySQL takes tens of seconds the first time.
+                  Doing it at boot means the first run is instant instead. It happens in the
+                  background, so the UI comes up immediately either way.
+                </small>
+              </span>
+            </label>
+            <div class="field">
+              <label for="cfg-prewarm-image">Image</label>
+              <input class="input mono" id="cfg-prewarm-image" spellcheck="false"
+                     placeholder="mysql:8.4" value="{{.Config.MySQL.PrewarmImage}}">
+              <small>
+                Leave empty for <code>mysql:8.4</code>, the default scenarios use.
+                A scenario naming a different image still starts its own container.
+              </small>
+            </div>
+            <small class="muted">Takes effect on the next start.</small>
+          </div>
+        </div>
+
+        <div class="panel">
           <div class="panel-head"><h2>MCP endpoint</h2></div>
           <div class="panel-body">
             <p class="muted" style="margin-top:0">

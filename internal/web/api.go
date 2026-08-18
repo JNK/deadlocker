@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,8 @@ import (
 	"github.com/jnk/deadlocker/internal/agentapi"
 	"github.com/jnk/deadlocker/internal/casedef"
 	"github.com/jnk/deadlocker/internal/chat"
+	"github.com/jnk/deadlocker/internal/engine"
+	"github.com/jnk/deadlocker/internal/store"
 )
 
 // ------------------------------------------------------------ activity feed
@@ -130,7 +134,13 @@ type settingsPayload struct {
 	Effort           string   `json:"effort"`
 	Extra            string   `json:"extra"`
 	MaxSteps         *int     `json:"max_steps"`
-	Note             string   `json:"note"`
+
+	// Container settings live in the same form; they are one checkbox and a
+	// field, and a second Save button would be worse than mixing them.
+	Prewarm      bool   `json:"prewarm"`
+	PrewarmImage string `json:"prewarm_image"`
+
+	Note string `json:"note"`
 }
 
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +171,8 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	next.LLM.Effort = strings.TrimSpace(req.Effort)
 	next.LLM.Extra = strings.TrimSpace(req.Extra)
 	next.LLM.MaxSteps = req.MaxSteps
+	next.MySQL.Prewarm = req.Prewarm
+	next.MySQL.PrewarmImage = strings.TrimSpace(req.PrewarmImage)
 
 	// The kwargs object is rejected here rather than at request time, so a typo
 	// surfaces while the settings page is still open instead of as a failed
@@ -223,6 +235,12 @@ func (s *Server) handleForgetRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mgr.History().Forget(id)
+	// Broadcast, so a second browser tab -- or a colleague looking at the same
+	// server -- does not keep offering a run that is no longer there.
+	s.api.Hub().Publish(agentapi.Activity{
+		Source: agentapi.SourceUI, Kind: agentapi.KindRunForgotten, RunID: id,
+		Summary: "removed run " + id + " from the log",
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -243,7 +261,166 @@ func (s *Server) handleClearRuns(w http.ResponseWriter, r *http.Request) {
 			n++
 		}
 	}
+	s.api.Hub().Publish(agentapi.Activity{
+		Source: agentapi.SourceUI, Kind: agentapi.KindRunForgotten,
+		Summary: fmt.Sprintf("cleared %d run(s) from the log", n),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n, "kept": len(live)})
+}
+
+// -------------------------------------------------- scenario import/export
+
+// bundleFormat identifies a Deadlocker scenario bundle. A shared file should
+// say what it is, and refusing to import something that is not one is friendlier
+// than failing on a missing field later.
+const (
+	bundleFormat  = "deadlocker.scenario"
+	bundleVersion = 1
+)
+
+// scenarioBundle is a scenario packaged for sharing.
+//
+// The YAML alone is enough to reproduce a scenario, so that is the whole of the
+// required payload. The optional run history is what makes a bug report useful:
+// "here is the scenario, and here is what it did on my machine".
+type scenarioBundle struct {
+	Format   string                  `json:"format"`
+	Version  int                     `json:"version"`
+	Exported time.Time               `json:"exported_at"`
+	ID       string                  `json:"id"`
+	Name     string                  `json:"name"`
+	Path     string                  `json:"path,omitempty"`
+	YAML     string                  `json:"yaml"`
+	Runs     []*engine.Record        `json:"runs,omitempty"`
+	Versions []store.ScenarioVersion `json:"versions,omitempty"`
+}
+
+// handleExportScenario writes a scenario as a shareable file. Without
+// ?history=1 it is the YAML itself, which is the most useful thing to hand
+// someone; with it, a JSON bundle carrying the runs too.
+func (s *Server) handleExportScenario(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.lib.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown scenario"})
+		return
+	}
+
+	withHistory := r.URL.Query().Get("history") == "1"
+	withVersions := r.URL.Query().Get("versions") == "1"
+	if !withHistory && !withVersions {
+		w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=%s.yaml", c.ID))
+		_, _ = io.WriteString(w, c.Source)
+		return
+	}
+
+	bundle := scenarioBundle{
+		Format: bundleFormat, Version: bundleVersion, Exported: time.Now(),
+		ID: c.ID, Name: c.Name, Path: c.Path, YAML: c.Source,
+	}
+	if withHistory {
+		bundle.Runs = s.mgr.History().ForCase(c.ID)
+	}
+	if withVersions {
+		bundle.Versions, _ = s.store.ScenarioVersions(c.ID, c.Source, 0)
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%s.deadlocker.json", c.ID))
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(bundle)
+}
+
+// handleImportScenario accepts either a bare scenario YAML or a bundle, and
+// writes it into the library.
+//
+// Importing never overwrites: a name that is taken gets a suffix instead. The
+// alternative is a drag-and-drop that silently replaces work, which is not a
+// trade anyone would take.
+func (s *Server) handleImportScenario(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	yamlSrc, err := unwrapImport(body)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	parsed, err := casedef.Parse([]byte(yamlSrc))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "error": "that file is not a valid scenario: " + err.Error()})
+		return
+	}
+
+	path := s.freePath(parsed)
+	saved, err := s.lib.SaveNote(path, []byte(yamlSrc), "imported")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.api.Hub().Publish(agentapi.Activity{
+		Source: agentapi.SourceUI, Kind: agentapi.KindScenarioCreated, ScenarioID: saved.ID,
+		Summary: fmt.Sprintf("imported scenario %q", saved.Name),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "id": saved.ID, "name": saved.Name, "path": saved.Path,
+	})
+}
+
+// unwrapImport pulls the YAML out of whatever was dropped: a bundle, or the
+// scenario itself.
+func unwrapImport(body []byte) (string, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return "", errors.New("that file is empty")
+	}
+	if !strings.HasPrefix(trimmed, "{") {
+		return trimmed, nil
+	}
+
+	var bundle scenarioBundle
+	if err := json.Unmarshal([]byte(trimmed), &bundle); err != nil {
+		return "", fmt.Errorf("that looks like JSON but is not a scenario bundle: %w", err)
+	}
+	if bundle.Format != bundleFormat {
+		return "", errors.New("that JSON file is not a Deadlocker scenario bundle")
+	}
+	if strings.TrimSpace(bundle.YAML) == "" {
+		return "", errors.New("that bundle has no scenario in it")
+	}
+	return bundle.YAML, nil
+}
+
+// freePath finds a library path that is not taken, so importing the same
+// scenario twice gives two files rather than one overwritten one.
+func (s *Server) freePath(c *casedef.Case) string {
+	base := agentapi.SuggestPath(c)
+	if !s.lib.Exists(base) {
+		if id := casedef.IDForPath(base); id == "" {
+			return base
+		} else if _, taken := s.lib.Get(id); !taken {
+			return base
+		}
+	}
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	for n := 2; n < 100; n++ {
+		candidate := fmt.Sprintf("%s-%d.yaml", stem, n)
+		if s.lib.Exists(candidate) {
+			continue
+		}
+		if _, taken := s.lib.Get(casedef.IDForPath(candidate)); !taken {
+			return candidate
+		}
+	}
+	return base
 }
 
 // ------------------------------------------------------- command palette

@@ -456,6 +456,10 @@ func (a *API) RestoreScenarioVersion(ctx context.Context, in RestoreScenarioVers
 	return SaveScenarioOutput{ID: saved.ID, Path: saved.Path, Scenario: summarise(saved), Warnings: lintCase(saved)}, nil
 }
 
+// SuggestPath derives a file path from a scenario's category and name. Exported
+// because importing a shared scenario needs the same convention.
+func SuggestPath(c *casedef.Case) string { return suggestPath(c) }
+
 // suggestPath derives a file path from a scenario's category and name.
 func suggestPath(c *casedef.Case) string {
 	name := c.ID

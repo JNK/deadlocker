@@ -70,7 +70,7 @@ func run() error {
 		casesDir  = flag.String("cases", "cases", "directory containing scenario YAML files")
 		statePath = flag.String("state", "", "path to the bbolt state file (default: <cases>/../.deadlocker/state.db)")
 		settle    = flag.Duration("settle", 400*time.Millisecond, "how long a statement may run before it is reported as blocked")
-		prewarm   = flag.String("prewarm", "", "start this MySQL image at boot instead of on the first run (e.g. mysql:8.4)")
+		prewarm   = flag.String("prewarm", "", "start this MySQL image at boot; overrides the setting in the UI")
 		keepStale = flag.Bool("keep-stale", false, "do not remove containers left behind by a previous run")
 		noSeed    = flag.Bool("no-seed", false, "do not copy the built-in example scenarios into the case directory")
 	)
@@ -191,16 +191,28 @@ func run() error {
 		return fmt.Errorf("listen on %s: %w", *addr, err)
 	}
 
-	if *prewarm != "" {
+	// Prewarming is a setting first and a flag second: the flag is for scripts,
+	// the setting is for the person who does not want to wait for a pull every
+	// morning. Either way it runs in its own goroutine — the UI has to come up
+	// now, not in two minutes.
+	image := *prewarm
+	if image == "" {
+		if cfg, _, err := st.Current(); err == nil && cfg.MySQL.Prewarm {
+			image = cfg.MySQL.Image()
+		}
+	}
+	if image != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
-			log.Printf("pre-warming %s…", *prewarm)
-			if _, err := pool.Get(ctx, *prewarm, func(s string) { log.Printf("  %s", s) }); err != nil {
-				log.Printf("pre-warm failed: %v", err)
+			log.Printf("pre-warming %s…", image)
+			if _, err := pool.Get(ctx, image, func(s string) { log.Printf("  %s", s) }); err != nil {
+				// Not fatal: every run starts its own container on demand, so a
+				// failed pre-warm costs time on the first run and nothing else.
+				log.Printf("pre-warm failed, will start on demand instead: %v", err)
 				return
 			}
-			log.Printf("%s is ready", *prewarm)
+			log.Printf("%s is ready", image)
 		}()
 	}
 

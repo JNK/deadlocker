@@ -13,6 +13,7 @@ const (
 	KindRunStarted      = "run.started"
 	KindRunStepped      = "run.stepped"
 	KindRunClosed       = "run.closed"
+	KindRunForgotten    = "run.forgotten"
 	KindConfigSaved     = "config.saved"
 	KindAnalysis        = "analysis.finished"
 	KindToolCalled      = "tool.called"

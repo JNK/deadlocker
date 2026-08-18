@@ -15,6 +15,34 @@ import (
 //go:embed all:examples
 var examples embed.FS
 
+// builtIn is the set of relative paths that ship with the binary, computed once.
+// It is what distinguishes a scenario from the library as shipped from one the
+// user wrote — a distinction worth drawing in the UI, since the built-in ones
+// are documentation and the custom ones are work.
+var builtIn = func() map[string]bool {
+	out := map[string]bool{}
+	_ = fs.WalkDir(examples, "examples", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if rel, relErr := filepath.Rel("examples", path); relErr == nil {
+			out[filepath.ToSlash(rel)] = true
+		}
+		return nil
+	})
+	return out
+}()
+
+// IsBuiltIn reports whether a library-relative path is one of the scenarios
+// that ship with the binary.
+//
+// Note that this is about provenance, not content: editing a built-in scenario
+// leaves it built in, which is the useful reading — it is still the one the
+// documentation refers to.
+func IsBuiltIn(relPath string) bool {
+	return builtIn[filepath.ToSlash(relPath)]
+}
+
 // SeedResult reports what Seed did.
 type SeedResult struct {
 	Written []string

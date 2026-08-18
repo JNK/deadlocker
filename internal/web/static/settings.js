@@ -94,6 +94,8 @@
       temperature: optNum('cfg-temp'),
       max_tokens: optInt('cfg-max-tokens'),
       max_steps: optInt('cfg-max-steps'),
+      prewarm: document.getElementById('cfg-prewarm').checked,
+      prewarm_image: val('cfg-prewarm-image'),
       top_p: optNum('cfg-top-p'),
       top_k: optInt('cfg-top-k'),
       min_p: optNum('cfg-min-p'),

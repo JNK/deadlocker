@@ -73,9 +73,33 @@ func (c LLMConfig) Steps() int {
 	return DefaultMaxSteps
 }
 
+// MySQLConfig covers the container the runs use.
+type MySQLConfig struct {
+	// Prewarm starts the image at boot instead of on the first run. Pulling and
+	// initialising MySQL takes tens of seconds the first time, and paying that
+	// while you are waiting to see a lock is the worst moment for it.
+	Prewarm bool `json:"prewarm"`
+	// PrewarmImage is which image to start. Empty means the default the
+	// scenarios use.
+	PrewarmImage string `json:"prewarm_image,omitempty"`
+}
+
+// DefaultImage is what a scenario gets when it names none, and what prewarming
+// starts when no image is configured.
+const DefaultImage = "mysql:8.4"
+
+// Image is the effective prewarm image.
+func (c MySQLConfig) Image() string {
+	if s := strings.TrimSpace(c.PrewarmImage); s != "" {
+		return s
+	}
+	return DefaultImage
+}
+
 // Config is everything the UI can change at runtime.
 type Config struct {
-	LLM LLMConfig `json:"llm"`
+	LLM   LLMConfig   `json:"llm"`
+	MySQL MySQLConfig `json:"mysql"`
 }
 
 // DefaultConfig is what a fresh install starts from. The default base URL

@@ -92,6 +92,10 @@ type Case struct {
 
 	// Path is where the case was loaded from. Empty for ad-hoc playground cases.
 	Path string `yaml:"-" json:"path,omitempty"`
+	// BuiltIn marks a scenario that ships with the binary rather than one the
+	// user wrote.
+	BuiltIn bool `yaml:"-" json:"built_in,omitempty"`
+
 	// Source is the raw YAML, kept so the playground editor round-trips
 	// comments and formatting instead of re-marshalling.
 	Source string `yaml:"-" json:"source,omitempty"`
@@ -328,6 +332,7 @@ func (l *Library) Load() error {
 		if c.ID == "" {
 			c.ID = slugify(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
 		}
+		c.BuiltIn = IsBuiltIn(rel)
 		if c.Category == "" {
 			if dir := filepath.Dir(rel); dir != "." {
 				c.Category = strings.ReplaceAll(dir, string(filepath.Separator), " / ")

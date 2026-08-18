@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>{{template "head" .}}</head>
-<body>
+<body data-drop-import>
 <div class="shell">
   {{template "sidebar" .}}
   <main class="main">
@@ -15,6 +15,22 @@
         </p>
       </div>
       <div class="page-actions">
+        <!-- Provenance is worth filtering on: the built-in scenarios are
+             documentation, the custom ones are your own work. -->
+        <div class="chip-filter" role="group" aria-label="Filter by origin">
+          <button class="chip-toggle is-active" type="button" data-origin="all">All
+            <span class="chip-toggle-count" data-origin-count="all"></span></button>
+          <button class="chip-toggle" type="button" data-origin="builtin">Built in
+            <span class="chip-toggle-count" data-origin-count="builtin"></span></button>
+          <button class="chip-toggle" type="button" data-origin="custom">Custom
+            <span class="chip-toggle-count" data-origin-count="custom"></span></button>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="import-open" type="button"
+                title="Import a scenario file, or just drop one on the page">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Import
+        </button>
+        <input type="file" id="import-file" accept=".yaml,.yml,.json" multiple hidden>
         <div class="library-search">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
           <input type="search" id="case-filter" placeholder="Filter scenarios and tags"
@@ -25,14 +41,20 @@
     </header>
 
     <section class="card-grid" id="case-grid">
+      <!-- Each category is a group so the filter can hide a heading whose cards
+           have all gone. -->
       {{range .Categories}}
+      <section class="grid-group" data-group>
       <h2 class="grid-heading">{{.Name}}</h2>
       <div class="grid">
         {{range .Cases}}
-        <a class="case-card" href="/case/{{.ID}}" data-case data-name="{{.Name}} {{join .Tags " "}}">
+        <a class="case-card" href="/case/{{.ID}}" data-case
+           data-origin="{{if .BuiltIn}}builtin{{else}}custom{{end}}"
+           data-name="{{.Name}} {{join .Tags " "}}">
           <h3>{{.Name}}</h3>
           <p>{{firstLine .Description}}</p>
           <div class="case-card-foot">
+            {{if not .BuiltIn}}<span class="chip chip-custom" title="Not one of the built-in scenarios">custom</span>{{end}}
             <span class="chip">{{len .Actors}} actors</span>
             <span class="chip">{{len .Steps}} steps</span>
             {{if .MySQL.Isolation}}<span class="chip">{{.MySQL.Isolation}}</span>{{end}}
@@ -45,7 +67,13 @@
         </a>
         {{end}}
       </div>
+      </section>
       {{end}}
+
+      <div class="empty-state" id="library-empty" hidden>
+        <h2>Nothing matches</h2>
+        <p>No scenario matches the current filter. Clear the search, or switch back to All.</p>
+      </div>
 
       {{if not .Categories}}
       <div class="empty-state">
@@ -66,6 +94,7 @@
 <script src="/static/sidebar.js"></script>
 <script src="/static/yaml.js"></script>
 <script src="/static/runpane.js"></script>
+<script src="/static/transfer.js"></script>
 {{template "assistant-mount" .}}
 </body>
 </html>

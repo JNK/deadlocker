@@ -54,8 +54,16 @@
     'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>';
 
+  var CHECK =
+    '<span class="run-pick-box" aria-hidden="true">' +
+    '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" ' +
+    'stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="m5 12 5 5 9-10"/></svg></span>';
+
   function rowHTML(e) {
-    return '<a class="run-chip" href="/run/' + esc(e.run_id) + '">' + chipHTML(e) + '</a>' +
+    return '<span class="run-pick" role="checkbox" aria-checked="false" tabindex="0">' +
+      CHECK + '</span>' +
+      '<a class="run-chip" href="/run/' + esc(e.run_id) + '">' + chipHTML(e) + '</a>' +
       '<button class="run-forget" type="button" data-forget ' +
       'aria-label="Remove this run from the log" title="Remove from the log">' + TRASH + '</button>';
   }
@@ -108,6 +116,13 @@
       host.appendChild(p);
     }
     paintCount(ordered.length);
+    // A run that has gone cannot stay selected.
+    if (picking) {
+      selection = selection.filter(function (id) {
+        return host.querySelector('[data-run-id="' + id + '"]');
+      });
+      paintPicks();
+    }
   }
 
   // ---------------------------------------------------------------- count
@@ -119,6 +134,90 @@
     if (countEl) countEl.textContent = n ? String(n) : '';
     if (clearBtn) clearBtn.hidden = !n;
   }
+
+  // ------------------------------------------------------------ comparing
+  //
+  // Comparing needs two runs, and the run log is where they are. Rather than a
+  // separate picker page, the list itself becomes selectable: press Compare,
+  // tick two, go. The rest of the sidebar keeps working while picking, so the
+  // mode is easy to back out of.
+
+  var picking = false;
+  var selection = [];
+  var compareToggle = document.getElementById('compare-toggle');
+  var compareBar = document.getElementById('compare-bar');
+  var compareCount = document.getElementById('compare-count');
+  var compareGo = document.getElementById('compare-go');
+  var compareCancel = document.getElementById('compare-cancel');
+
+  function paintPicks() {
+    host.querySelectorAll('[data-run-id]').forEach(function (row) {
+      var on = selection.indexOf(row.dataset.runId) >= 0;
+      row.classList.toggle('is-picked', on);
+      var box = row.querySelector('.run-pick');
+      if (box) box.setAttribute('aria-checked', String(on));
+    });
+    if (!compareBar) return;
+    compareGo.disabled = selection.length !== 2;
+    compareCount.textContent = selection.length === 0 ? 'Pick two runs'
+      : selection.length === 1 ? 'One picked — pick one more'
+      : 'Two picked';
+  }
+
+  function setPicking(on) {
+    picking = on;
+    selection = [];
+    document.body.classList.toggle('is-picking-runs', on);
+    if (compareBar) compareBar.hidden = !on;
+    if (compareToggle) compareToggle.classList.toggle('is-active', on);
+    paintPicks();
+  }
+
+  function togglePick(row) {
+    var id = row.dataset.runId;
+    var at = selection.indexOf(id);
+    if (at >= 0) selection.splice(at, 1);
+    // Two is the whole point, so a third replaces the older pick rather than
+    // being refused — refusing would mean untick-then-tick for every change.
+    else if (selection.push(id) > 2) selection.shift();
+    paintPicks();
+  }
+
+  if (compareToggle) {
+    compareToggle.addEventListener('click', function () { setPicking(!picking); });
+  }
+  if (compareCancel) compareCancel.addEventListener('click', function () { setPicking(false); });
+  if (compareGo) {
+    compareGo.addEventListener('click', function () {
+      if (selection.length !== 2) return;
+      window.location.href = '/compare?a=' + encodeURIComponent(selection[0]) +
+        '&b=' + encodeURIComponent(selection[1]);
+    });
+  }
+
+  // While picking, the whole row toggles instead of navigating.
+  host.addEventListener('click', function (e) {
+    if (!picking) return;
+    if (e.target.closest('[data-forget]')) return;
+    var row = e.target.closest('[data-run-id]');
+    if (!row) return;
+    e.preventDefault();
+    togglePick(row);
+  }, true);
+
+  host.addEventListener('keydown', function (e) {
+    if (!picking || (e.key !== ' ' && e.key !== 'Enter')) return;
+    var box = e.target.closest('.run-pick');
+    if (!box) return;
+    e.preventDefault();
+    togglePick(box.closest('[data-run-id]'));
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !picking) return;
+    if (window.DL.dialogOpen && window.DL.dialogOpen()) return;
+    setPicking(false);
+  });
 
   // ------------------------------------------------------------- removal
 
