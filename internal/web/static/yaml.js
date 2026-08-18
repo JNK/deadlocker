@@ -514,6 +514,75 @@
     });
   }
 
+  // ------------------------------------------------------ step locations
+  //
+  // Which step is the caret in? Enough of the document's shape to answer that,
+  // without a YAML parser: find the steps block, then every list item that
+  // starts at the same indent is one step. The editor uses this to point at the
+  // matching step in the preview beside it, so the two halves of the page are
+  // never talking about different things.
+
+  // stepRanges returns the inclusive line span of each step, in order.
+  function stepRanges(text) {
+    var lines = String(text || '').split('\n');
+    var ranges = [];
+    var inSteps = false;
+    var itemIndent = -1;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.trim()) continue;
+      var indent = line.length - line.replace(/^\s*/, '').length;
+
+      if (!inSteps) {
+        // Only a top-level `steps:` counts, so a `steps:` nested in prose or in
+        // another mapping does not open a block.
+        if (indent === 0 && /^steps\s*:/.test(line)) {
+          inSteps = true;
+          itemIndent = -1;
+        }
+        continue;
+      }
+
+      // Any other top-level key closes the block.
+      if (indent === 0) {
+        if (ranges.length) ranges[ranges.length - 1].end = i - 1;
+        inSteps = false;
+        continue;
+      }
+
+      var m = /^(\s*)-\s/.exec(line);
+      if (!m) continue;
+      var ind = m[1].length;
+      if (itemIndent === -1) itemIndent = ind;
+      // A deeper dash is a nested list -- args, say -- not another step.
+      if (ind !== itemIndent) continue;
+
+      if (ranges.length) ranges[ranges.length - 1].end = i - 1;
+      ranges.push({ start: i, end: lines.length - 1 });
+    }
+    return ranges;
+  }
+
+  // stepAtLine returns the 1-based step number containing a line, or 0.
+  function stepAtLine(text, line) {
+    var ranges = stepRanges(text);
+    for (var i = 0; i < ranges.length; i++) {
+      if (line >= ranges[i].start && line <= ranges[i].end) return i + 1;
+    }
+    return 0;
+  }
+
+  // stepAtOffset is the same thing from a caret position.
+  function stepAtOffset(text, offset) {
+    var before = String(text || '').slice(0, offset);
+    return stepAtLine(text, before.split('\n').length - 1);
+  }
+
+  window.DL.yamlStepRanges = stepRanges;
+  window.DL.yamlStepAtLine = stepAtLine;
+  window.DL.yamlStepAtOffset = stepAtOffset;
+
   window.DL.highlightYAML = highlightYAML;
   window.DL.attachEditor = attachEditor;
   window.DL.highlightYAMLViews = highlightViews;

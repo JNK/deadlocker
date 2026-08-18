@@ -231,6 +231,10 @@ Alignment colons (`:--`, `:-:`, `--:`) are honoured, outer pipes are optional,
 `\|` escapes a pipe inside a cell, and a row with the wrong number of cells is
 padded or truncated rather than left to break the table's shape.
 
+In the editor, moving the caret into a step lights that step up in the preview
+beside it — the two panes are halves of one document, and without that they are
+only related by the reader holding both in their head.
+
 **Ordering rule.** A connection runs one statement at a time, so a blocked actor
 cannot accept its next step. Put the statement that releases the lock — usually
 a `COMMIT` on the other actor — before the blocked actor's next step, or the

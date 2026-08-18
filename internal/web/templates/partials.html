@@ -46,10 +46,10 @@
   <!-- A run log, not a scenario list: the library page is where scenarios are
        browsed and searched. -->
   <div class="sidebar-runs-head">
-    <span class="nav-group-title">Runs</span>
     <!-- Compare lives in the footer with the other destinations; a second link
-         to it here was one too many. This is where the count goes instead. -->
-    <span class="nav-group-count" id="runs-count">{{if .Runs}}{{len .Runs}}{{end}}</span>
+         to it here was one too many. The count goes here instead, and reads as
+         a sentence rather than a label with a number stuck after it. -->
+    <span class="nav-group-title" id="runs-count">{{if .Runs}}{{len .Runs}} run{{if ne (len .Runs) 1}}s{{end}}{{else}}Runs{{end}}</span>
     <button class="sidebar-clear" id="runs-clear" type="button"
             title="Clear the run log"{{if not .Runs}} hidden{{end}}>
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>

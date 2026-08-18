@@ -502,9 +502,10 @@ pre.error-text { color: var(--danger); border-color: var(--danger); background: 
   text-transform: uppercase;
   letter-spacing: .05em;
   color: var(--text-3);
-  /* Opaque where it overlaps the cards passing underneath. The header above is
-     frosted; a second blurred layer on top of it reads as smudged. */
-  background: var(--bg);
+  /* The same subtle tint every other section header in the app has, and opaque
+     where it overlaps the cards passing underneath -- the page header above is
+     frosted, and a second blurred layer on top of it reads as smudged. */
+  background: var(--surface-2);
   border-bottom: 1px solid transparent;
 }
 .grid-heading.is-stuck { border-bottom-color: var(--border); }
@@ -813,8 +814,12 @@ pre.error-text { color: var(--danger); border-color: var(--danger); background: 
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-top: 1px solid var(--border);
+  /* Deliberately stronger than a hairline: the drawer is a different kind of
+     surface from the timeline above it, and at a glance the two were reading as
+     one scrolling area. */
+  border-top: 1px solid var(--border-strong);
   background: var(--surface);
+  box-shadow: 0 -8px 20px -12px rgba(0, 0, 0, .35);
 }
 .dock-tabs {
   display: flex;
@@ -1316,7 +1321,12 @@ td.cell-b { color: var(--a-teal); }
 .y-blk { color: var(--a-rose); font-weight: 600; }
 .y-kw { color: var(--a-violet); font-weight: 600; }
 
+/* A scroll box inside a scrolling page traps the wheel and hides how long the
+   file is. On the scenario page the source grows to its full height and the page
+   scrolls; the editor, which has to stay put beside its step view, keeps its
+   own box. */
 pre.yaml.code-scroll { max-height: 70vh; overflow: auto; border: 0; border-radius: 0; }
+.tab-panel pre.yaml.code-scroll { max-height: none; overflow: visible; }
 
 /* ========================================================= completion menu */
 
@@ -3038,13 +3048,7 @@ body::before {
    link to Compare used to be. */
 .sidebar-runs-head { gap: 6px; }
 .sidebar-runs-head .nav-group-title { padding-right: 0; }
-.nav-group-count {
-  margin-right: auto;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
+.sidebar-runs-head .nav-group-title { margin-right: auto; font-variant-numeric: tabular-nums; }
 .sidebar-clear {
   display: flex; align-items: center; justify-content: center;
   width: 20px; height: 20px;
@@ -3241,3 +3245,14 @@ body.is-picking-runs .run-chip { cursor: pointer; }
 .menu-item:hover { background: var(--surface-3); }
 .menu-item strong { font-size: 13px; font-weight: 500; }
 .menu-item span { font-size: 11.5px; color: var(--text-3); }
+
+/* The step the editor's caret is in. Deliberately quiet: it is orientation, not
+   a status, and it sits alongside the real statuses a run produces. */
+.steps-item.is-current {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.steps-item.is-current .steps-num {
+  background: var(--accent);
+  color: #fff;
+}

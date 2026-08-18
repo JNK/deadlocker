@@ -597,7 +597,7 @@
       t.addEventListener('click', function () { activateTab(t.dataset.tab); });
     });
     document.getElementById('locks-granted').addEventListener('change', renderLocks);
-    setupDockResize();
+    setupDock();
     renderAllSteps();
     renderRunState();
     if (window.DL_ARCHIVED_LOCKS) {
@@ -918,8 +918,6 @@
       try { localStorage.removeItem('dl-dock-height'); } catch (e) {}
     });
   }
-  setupDockResize();
-
   // ------------------------------------------------------ collapsible drawer
   //
   // The dock is where you read what happened; the lanes are where you watch it
@@ -971,7 +969,16 @@
       });
     });
   }
-  setupDockCollapse();
+
+  // The dock's own chrome -- resize and collapse -- belongs to the drawer rather
+  // than to the run controls, so it is wired for a closed run too. It was not,
+  // which is why the collapse button did nothing on an archived run: the early
+  // return for "no controls to bind" skipped it.
+  function setupDock() {
+    setupDockResize();
+    setupDockCollapse();
+  }
+  setupDock();
 
   // ------------------------------------------------------------- start up
 

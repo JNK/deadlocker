@@ -131,7 +131,9 @@
   var clearBtn = document.getElementById('runs-clear');
 
   function paintCount(n) {
-    if (countEl) countEl.textContent = n ? String(n) : '';
+    if (countEl) {
+      countEl.textContent = n ? (n + ' run' + (n === 1 ? '' : 's')) : 'Runs';
+    }
     if (clearBtn) clearBtn.hidden = !n;
   }
 

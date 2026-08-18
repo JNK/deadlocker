@@ -153,8 +153,30 @@
     }, 350);
   }
 
+  // ------------------------------------------------- follow the caret
+  //
+  // The editor and the step view are two halves of the same document, and
+  // without this they are only related by the reader holding both in their
+  // head. Moving the caret into a step lights that step up beside it.
+  function followCaret() {
+    pane.setCurrentStep(window.DL.yamlStepAtOffset(source.value, source.selectionStart));
+  }
+  ['click', 'keyup', 'input', 'focus'].forEach(function (ev) {
+    source.addEventListener(ev, followCaret);
+  });
+  // selectionchange is the only event that fires for a caret moved by the
+  // platform itself -- a drag, a context menu, an accessibility action.
+  document.addEventListener('selectionchange', function () {
+    if (document.activeElement === source) followCaret();
+  });
+  source.addEventListener('blur', function () {
+    // Keep the highlight: the point is to know where you were, and it survives
+    // clicking into the pane to read the step you just wrote.
+  });
+
   source.addEventListener('input', refresh);
   refresh();
+  followCaret();
 
   document.getElementById('pg-run').addEventListener('click', function () {
     pane.start(source.value);

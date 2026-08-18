@@ -22,7 +22,7 @@
   // renderSteps draws the scenario, with live statuses overlaid when a run is
   // attached. Steps are matched by index, so the list keeps its shape whether
   // or not anything has run yet.
-  function renderSteps(host, scenario, liveSteps) {
+  function renderSteps(host, scenario, liveSteps, currentStep) {
     if (!scenario || !scenario.valid) {
       host.innerHTML = '<div class="steps-empty">' +
         (scenario && scenario.error
@@ -58,6 +58,7 @@
       var live = statuses[s.index];
       var status = live ? live.status : 'pending';
       html += '<li class="steps-item accent-' + esc(s.accent || 'blue') + ' status-' + esc(status) +
+        (s.index === currentStep ? ' is-current' : '') +
         '" data-step="' + s.index + '">' +
         '<div class="steps-item-head">' +
         '<span class="steps-num">' + s.index + '</span>' +
@@ -119,6 +120,8 @@
     var run = null;      // { id, started, state, steps, tick }
     var timer = 0;
     var source = null;
+    // The step the editor's caret is sitting in, if anything is telling us.
+    var current = 0;
 
     function note(kind, text) {
       if (opts.onNote) opts.onNote(kind, text);
@@ -130,7 +133,7 @@
 
     function paintSteps() {
       var live = run ? Object.keys(run.steps).map(function (k) { return run.steps[k]; }) : null;
-      renderSteps(el.stepsEl, scenario, live);
+      renderSteps(el.stepsEl, scenario, live, current);
     }
 
     function paintControls() {
@@ -272,8 +275,23 @@
     paintSteps();
     paintControls();
 
+    // setCurrentStep points the pane at whichever step is being edited. It
+    // repaints only when the answer changes: this is driven by caret movement,
+    // which happens on every keystroke.
+    function setCurrentStep(index) {
+      index = Number(index) || 0;
+      if (index === current) return;
+      current = index;
+      paintSteps();
+      var li = el.stepsEl.querySelector('.steps-item.is-current');
+      if (li && li.scrollIntoView) {
+        li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+
     return {
       setScenario: function (view) { scenario = view; paintSteps(); paintControls(); },
+      setCurrentStep: setCurrentStep,
       scenario: function () { return scenario; },
       attach: attach,
       detach: detach,

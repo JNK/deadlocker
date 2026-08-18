@@ -159,5 +159,73 @@ check('an unknown key offers no value completions', () => {
   assert.strictEqual(C(src, src.length), null);
 });
 
+
+// --- step locations -------------------------------------------------------
+// The editor uses these to point at the step the caret is in, so the two halves
+// of the page are never describing different things.
+
+const DOC = [
+  'name: Example',              // 0
+  'actors:',                    // 1
+  '  - id: a',                  // 2
+  'steps:',                     // 3
+  '  - actor: a',               // 4
+  '    sql: BEGIN',             // 5
+  '',                           // 6
+  '  - actor: a',               // 7
+  '    sql: |',                 // 8
+  '      SELECT 1',             // 9
+  '    args:',                  // 10
+  '      - 1',                  // 11
+  '      - 2',                  // 12
+  '  - actor: b',               // 13
+  '    sql: COMMIT'             // 14
+].join('\n');
+
+check('steps are located by line', function () {
+  const at = window.DL.yamlStepAtLine;
+  assert.strictEqual(at(DOC, 0), 0, 'name is not in a step');
+  assert.strictEqual(at(DOC, 3), 0, 'the steps: key itself is not in a step');
+  assert.strictEqual(at(DOC, 4), 1);
+  assert.strictEqual(at(DOC, 5), 1);
+  assert.strictEqual(at(DOC, 7), 2);
+  assert.strictEqual(at(DOC, 9), 2, 'a block scalar body belongs to its step');
+  assert.strictEqual(at(DOC, 13), 3);
+  assert.strictEqual(at(DOC, 14), 3);
+});
+
+check('a nested list is not mistaken for a step', function () {
+  // Lines 11 and 12 are args entries, indented deeper than the step dashes.
+  assert.strictEqual(window.DL.yamlStepAtLine(DOC, 11), 2);
+  assert.strictEqual(window.DL.yamlStepAtLine(DOC, 12), 2);
+  assert.strictEqual(window.DL.yamlStepRanges(DOC).length, 3);
+});
+
+check('a top-level key after the steps closes the block', function () {
+  const doc = 'steps:\n  - actor: a\n    sql: BEGIN\ntags: [x]\nname: after';
+  assert.strictEqual(window.DL.yamlStepAtLine(doc, 1), 1);
+  assert.strictEqual(window.DL.yamlStepAtLine(doc, 3), 0, 'tags is not a step');
+  assert.strictEqual(window.DL.yamlStepAtLine(doc, 4), 0, 'name is not a step');
+});
+
+check('an indented steps: does not open a block', function () {
+  const doc = 'mysql:\n  steps: 3\nname: x';
+  assert.strictEqual(window.DL.yamlStepRanges(doc).length, 0);
+});
+
+check('an offset maps to the same step as its line', function () {
+  const at = window.DL.yamlStepAtOffset;
+  assert.strictEqual(at(DOC, 0), 0);
+  assert.strictEqual(at(DOC, DOC.indexOf('sql: BEGIN')), 1);
+  assert.strictEqual(at(DOC, DOC.indexOf('sql: COMMIT')), 3);
+});
+
+check('a document with no steps has none', function () {
+  assert.strictEqual(window.DL.yamlStepRanges('name: x').length, 0);
+  assert.strictEqual(window.DL.yamlStepAtLine('', 0), 0);
+  assert.strictEqual(window.DL.yamlStepAtOffset(null, 0), 0);
+});
+
+
 console.log(failures ? '\n' + failures + ' failure(s)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

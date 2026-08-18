@@ -700,11 +700,33 @@ func (s *Server) startAndRespond(w http.ResponseWriter, r *http.Request, c *case
 		s.render(w, "error.html", pd)
 		return
 	}
+	// Announce it. Runs started from an MCP client or the assistant already
+	// publish through agentapi; without this, a run started from the browser was
+	// the one kind nobody else heard about -- so a second tab's run log only
+	// caught up on its next navigation or its next slow poll.
+	s.announceRun(agentapi.KindRunStarted, run.ID, c,
+		fmt.Sprintf("started a run of %q", c.Name))
+
 	if wantJSON {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "run_id": run.ID})
 		return
 	}
 	http.Redirect(w, r, "/run/"+run.ID, http.StatusSeeOther)
+}
+
+// announceRun publishes a run lifecycle event. Draft runs are deliberately
+// silent: they never appear in the sidebar, so an event about one is noise.
+func (s *Server) announceRun(kind, runID string, c *casedef.Case, summary string) {
+	if c != nil && c.Ephemeral {
+		return
+	}
+	act := agentapi.Activity{
+		Source: agentapi.SourceUI, Kind: kind, RunID: runID, Summary: summary,
+	}
+	if c != nil {
+		act.ScenarioID = c.ID
+	}
+	s.api.Hub().Publish(act)
 }
 
 func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
@@ -755,6 +777,9 @@ func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, stepErrorPayload(err))
 		return
 	}
+	// The step counter in the sidebar is part of what a watcher is watching.
+	s.announceRun(agentapi.KindRunStepped, run.ID, run.Case,
+		fmt.Sprintf("stepped %s", run.ID))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "step": res})
 }
 
@@ -788,6 +813,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	s.announceRun(agentapi.KindRunStepped, run.ID, run.Case,
+		fmt.Sprintf("advanced %s by %d step(s)", run.ID, advanced))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "advanced": advanced})
 }
 
@@ -827,10 +854,19 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// The case has to be read before the run is closed, since closing removes it
+	// from the manager.
+	var c *casedef.Case
+	if run, ok := s.mgr.Get(id); ok {
+		c = run.Case
+	}
 	if err := s.mgr.CloseRun(id); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// Closing moves a run from live to recorded, which changes how every open
+	// sidebar draws it.
+	s.announceRun(agentapi.KindRunClosed, id, c, "closed run "+id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
