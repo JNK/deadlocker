@@ -396,6 +396,7 @@ browser-free tests, and the Markdown renderer is tested in Go:
 node hack/yaml_test.js
 node hack/palette_test.js
 node hack/deadlock_test.js
+node hack/library_test.js
 node hack/css_test.js
 go test ./...
 ```

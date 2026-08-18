@@ -74,9 +74,14 @@
         );
         group.classList.toggle('is-hidden', !anyVisible);
       });
+      // "Nothing matches" is about the filter, so it only applies when there was
+      // something to filter. With an empty library the page already has its own
+      // empty state, and showing both said two different things at once.
       var empty = document.getElementById('library-empty');
       if (empty) {
-        empty.hidden = !!document.querySelector('[data-case]:not(.is-hidden)');
+        var total = document.querySelectorAll('[data-case]').length;
+        var visible = document.querySelectorAll('[data-case]:not(.is-hidden)').length;
+        empty.hidden = total === 0 || visible > 0;
       }
       syncURL();
     };
