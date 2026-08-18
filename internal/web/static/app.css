@@ -2814,6 +2814,8 @@ body::before {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
+/* Five cells, always. The "on disk" badge lives inside the details cell rather
+   than being a sixth child that only some rows have. */
 .version-head {
   display: grid;
   grid-template-columns: 44px 150px minmax(0, 1fr) auto auto;
@@ -2821,6 +2823,7 @@ body::before {
   gap: 10px;
   padding: 9px 12px;
 }
+.version-side { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .version-num { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
 .version-when { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .version-note {
@@ -2843,8 +2846,8 @@ body::before {
    the note into an ellipsis two characters wide. */
 @media (max-width: 860px) {
   .version-head { grid-template-columns: 44px minmax(0, 1fr); }
-  .version-when, .version-meta { grid-column: 2; }
-  .version-actions { grid-column: 2; }
+  .version-when, .version-side, .version-actions { grid-column: 2; }
+  .version-side { justify-content: flex-start; }
 }
 
 /* ---------------------------------------------------------- command palette */

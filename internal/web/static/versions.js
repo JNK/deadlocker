@@ -26,14 +26,19 @@
     var meta = [v.lines + (v.lines === 1 ? ' line' : ' lines')];
     if (v.path) meta.push(v.path);
 
+    // The badge shares a cell with the file details rather than taking one of
+    // its own: an optional grid child means the current row has one more cell
+    // than every other, which wrapped its buttons onto a second line.
     return '<div class="version-row' + (v.is_current ? ' is-current' : '') +
       '" data-version="' + v.version + '">' +
       '<div class="version-head">' +
       '<span class="version-num mono">v' + v.version + '</span>' +
       '<span class="version-when">' + esc(stamp(v.saved_at)) + '</span>' +
       '<span class="version-note">' + esc(v.note || 'saved') + '</span>' +
+      '<span class="version-side">' +
       (v.is_current ? '<span class="version-current">on disk</span>' : '') +
       '<span class="version-meta mono">' + esc(meta.join(' · ')) + '</span>' +
+      '</span>' +
       '<span class="version-actions">' +
       '<button class="btn btn-sm" type="button" data-preview="' + v.version + '">Preview</button>' +
       (v.is_current ? '' :
