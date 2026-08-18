@@ -39,6 +39,28 @@ IDENTIFIER="${IDENTIFIER:-io.jnk.deadlocker}"
 # not always a checkout, and two builds on one day still want two filenames.
 VERSION="${VERSION:-$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || date -u +%Y.%m.%d.%H%M)}"
 
+# The build takes the working tree, but the version claims a tag — so an
+# installer built with uncommitted changes is stamped with a version whose
+# source does not contain them. Anyone who later builds that tag gets something
+# different from what was published, and nothing says so.
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]; then
+    if [ "${ALLOW_DIRTY:-}" = "1" ]; then
+        printf 'warning: building %s from a dirty working tree because ALLOW_DIRTY=1\n' "$VERSION" >&2
+    else
+        cat >&2 <<EOF
+error: the working tree has uncommitted changes.
+
+This would package them under version $VERSION, whose tag does not contain
+them. Commit or stash first:
+
+$(git -C "$REPO_ROOT" status --short | sed 's/^/  /')
+
+To build a throwaway package anyway, set ALLOW_DIRTY=1.
+EOF
+        exit 1
+    fi
+fi
+
 # A tag may legally contain a slash; a filename and a pkg version string may not.
 VERSION_SAFE="${VERSION//\//-}"
 PKG="$DIST/Deadlocker-$VERSION_SAFE.pkg"
