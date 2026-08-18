@@ -242,6 +242,9 @@ type RunState struct {
 	Interrupted string `json:"interrupted,omitempty"`
 	// Ephemeral marks a run of an unsaved draft.
 	Ephemeral bool `json:"ephemeral,omitempty"`
+	// DraftID is the draft this run was started from, so the page can offer the
+	// way back to the editor that produced it.
+	DraftID string `json:"draft_id,omitempty"`
 }
 
 // actorConn is one simulated client: its own proxy, its own dedicated MySQL
@@ -803,6 +806,7 @@ func (r *Run) stateLocked() RunState {
 		LockWaitTimeout: r.Case.MySQL.LockWaitTimeout,
 		Interrupted:     r.interrupt,
 		Ephemeral:       r.Case.Ephemeral,
+		DraftID:         r.Case.DraftID,
 		Prepare:         r.prepare,
 	}
 	if r.box != nil {

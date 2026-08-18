@@ -118,6 +118,11 @@ type Case struct {
 	// being built, run before it has been saved. Runs of it are real, but it
 	// has no place in the library or the sidebar.
 	Ephemeral bool `yaml:"-" json:"ephemeral,omitempty"`
+	// DraftID is the saved draft this was run from, when it was run from the
+	// editor. It is what lets a run page offer the way back to the text that
+	// produced it, which is the first thing anyone wants after watching a test
+	// run of something they are still writing.
+	DraftID string `yaml:"-" json:"draft_id,omitempty"`
 }
 
 // Marshal renders a case back to YAML. Comments and original formatting are

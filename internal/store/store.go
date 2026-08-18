@@ -190,7 +190,7 @@ func Open(path string) (*Store, error) {
 	s := &Store{path: path}
 
 	if err := s.update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketConfig, bucketMeta, bucketScenarios} {
+		for _, b := range [][]byte{bucketConfig, bucketMeta, bucketScenarios, bucketDrafts} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}

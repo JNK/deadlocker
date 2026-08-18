@@ -244,8 +244,11 @@
     }
 
     // start runs the given YAML end to end: one press, no stepping required.
-    function start(yaml) {
-      return window.DL.postJSON('/run', { source: yaml }).then(function (r) {
+    //
+    // draftID ties the run to the buffer it came from, so the full run page --
+    // which is one click away in the bar -- can offer the way back to it.
+    function start(yaml, draftID) {
+      return window.DL.postJSON('/run', { source: yaml, draft_id: draftID || '' }).then(function (r) {
         if (!r.ok) { note('error', r.error); return null; }
         attach(r.run_id);
         paintControls();

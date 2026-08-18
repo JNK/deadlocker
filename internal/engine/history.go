@@ -35,6 +35,9 @@ type Record struct {
 	Outcome string `json:"outcome"`
 	// Ephemeral marks a run of an unsaved draft, which no saved scenario owns.
 	Ephemeral bool `json:"ephemeral,omitempty"`
+	// DraftID is the draft it was run from, so a closed run still leads back to
+	// the text that produced it.
+	DraftID string `json:"draft_id,omitempty"`
 
 	// Counters, precomputed so listings do not have to walk the steps.
 	Submitted  int `json:"submitted"`
@@ -91,6 +94,7 @@ func snapshotRecord(r *Run) *Record {
 		StartedAt:       state.Started,
 		EndedAt:         time.Now(),
 		Ephemeral:       state.Ephemeral,
+		DraftID:         state.DraftID,
 		Status:          state.Status,
 		Steps:           steps,
 		DeadlockReport:  state.DeadlockReport,

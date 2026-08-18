@@ -50,6 +50,38 @@
     {{end}}
   </div>
 
+  <!-- Scenarios still being written. A draft is only useful if you can find it
+       again from wherever you ended up, which is usually a run page watching
+       the thing you just wrote. -->
+  <div class="sidebar-drafts" id="sidebar-drafts" {{if not .Drafts}}hidden{{end}}>
+    <div class="sidebar-runs-head">
+      <span class="nav-group-title" id="drafts-count">
+        {{if .Drafts}}{{len .Drafts}} draft{{if ne (len .Drafts) 1}}s{{end}}{{else}}Drafts{{end}}
+      </span>
+    </div>
+    <nav id="sidebar-drafts-list">
+      {{range .Drafts}}
+      <div class="draft-row{{if eq .ID $.ActiveDraft}} is-active{{end}}" data-draft-id="{{.ID}}">
+        <a class="draft-chip" href="/playground?draft={{.ID}}">
+          <span class="draft-chip-body">
+            <span class="draft-chip-name">{{.Name}}</span>
+            <span class="draft-chip-meta">
+              {{if .Valid}}<span class="mono">{{.Steps}} step{{if ne .Steps 1}}s{{end}}</span>
+              {{else}}<span class="draft-chip-wip">in progress</span>{{end}}
+              {{if .ScenarioID}}<span class="draft-chip-edit" title="Unsaved changes to a scenario in the library">edits</span>{{end}}
+              <span class="run-chip-time">{{clock .UpdatedAt}}</span>
+            </span>
+          </span>
+        </a>
+        <button class="run-forget" type="button" data-discard-draft
+                aria-label="Discard this draft" title="Discard this draft">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>
+        </button>
+      </div>
+      {{end}}
+    </nav>
+  </div>
+
   <!-- A run log, not a scenario list: the library page is where scenarios are
        browsed and searched. -->
   <div class="sidebar-runs-head">

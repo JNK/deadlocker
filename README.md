@@ -28,6 +28,11 @@ a sentence.*
   `data_lock_waits` after every step, with each lock mode translated into a
   sentence — the difference between `X`, `X,GAP`, `X,REC_NOT_GAP` and
   `X,INSERT_INTENTION` is the whole ballgame and the UI says so.
+- **Shows the table the locks are about**, in the order of whichever index you
+  pick, with record locks drawn on the row and gap locks drawn on a line
+  *between* two rows — a gap lock is a lock on nothing, and that is the only
+  honest way to show one. Up to four tables side by side, re-read after every
+  step.
 - **Draws the wait-for graph** that InnoDB's deadlock detector is looking at:
   actors as nodes, waits as labelled arrows. When the arrows close a loop it
   says so loudly — which you can actually watch happen in the
@@ -50,6 +55,10 @@ a sentence.*
   scenario, change one line in the playground, run it again, compare: the
   REPEATABLE READ and READ COMMITTED versions of the gap-lock case differ in
   exactly one step, and the diff shows you which.
+- **Keeps a draft of whatever you are writing**, so pressing Run is not a way to
+  lose it: the run page leads back to the editor, and the sidebar lists what is
+  unfinished. Drafts are unversioned; saving to the library is what makes the
+  first version.
 - **Serves an MCP endpoint** so an external agent can list and author
   scenarios, start runs, step them, and read the resulting lock state.
 - **Ships an optional assistant** that drives those same tools against any
@@ -143,8 +152,9 @@ build step and no npm.
 
 ### Where state lives
 
-Configuration — the model endpoint, the API key, the prewarm setting — and the
-scenario revision history live in `~/.config/deadlocker/state.db`
+Configuration — the model endpoint, the API key, the prewarm setting — the
+scenario revision history and the editor's drafts live in
+`~/.config/deadlocker/state.db`
 (`$XDG_CONFIG_HOME` is honoured). They are per user, not per project: settings
 that vanish because you started the tool from a different directory are settings
 you have to set twice. A state file left over in the old per-project location is
@@ -168,9 +178,9 @@ run log, so anything still open is one click away from wherever you are.*
 
 <kbd>⌘K</kbd> (<kbd>Ctrl K</kbd> elsewhere), or **Search** in the sidebar
 footer, opens the command palette, which
-searches scenarios by name, category, tag and description text, runs by id, and
-analyses — plus the handful of destinations that are otherwise a click into a
-menu. Ranking prefers a title prefix over a mid-word hit over a subsequence, so
+searches scenarios by name, category, tag and description text, drafts, runs by
+id, and analyses — plus the handful of destinations that are otherwise a click
+into a menu. Ranking prefers a title prefix over a mid-word hit over a subsequence, so
 typing `gap` lands on the scenario named after gap locks rather than one that
 merely mentions them.
 
@@ -219,9 +229,10 @@ to come next.
 
 The dock at the bottom has: the selected step's result or error (with a note on
 what the error actually did to your transaction), the live lock table with the
-wait-for graph, a SQL console on the run's own connections, the decoded packet
-stream, the container log, and the InnoDB deadlock report. It collapses to its
-tab bar when you want the timeline full-height, and remembers that.
+wait-for graph, the tables themselves, a SQL console on the run's own
+connections, the decoded packet stream, the container log, and the InnoDB
+deadlock report. It collapses to its tab bar when you want the timeline
+full-height, and remembers that.
 
 The **Locks** tab draws the wait-for graph — one node per actor, one arrow per
 wait edge, the cycle highlighted when one closes. That graph *is* what InnoDB's
@@ -233,6 +244,36 @@ locks taken, released, and moved between waiting and granted — because the
 question while stepping is what the last statement did, not what is held now.
 Underneath it, the transaction table carries `rows_locked` and `rows_modified`,
 which is roughly what InnoDB weighs when picking a deadlock victim.
+
+The **Data** tab is the table the locks are about.
+
+"Request A holds `X,GAP` on `PRIMARY` before key 20" is a true sentence and an
+unreadable one until you can see that the table has 10, 20 and 30 in it and
+nothing in between. So the tab reads the table in index order and draws each
+lock where it actually applies: on the row, for a record or next-key lock, and
+on a line of its own *between* two rows for a gap lock — because a gap lock is a
+lock on nothing, and any other way of drawing it is a lie. The gap above the
+highest key gets that line too, labelled as the supremum, which is the one every
+ascending id lands in.
+
+Pick the index as well as the table. InnoDB locks index records, so the same
+statement takes different-looking locks in different indexes; reading the table
+in that index's order is what makes them line up. A secondary index lock reports
+the primary key after the indexed columns, which is how those rows are found
+again here.
+
+Up to four tables can be open side by side, because a foreign-key scenario is
+two tables or it is nothing. Every view re-reads itself whenever a lock snapshot
+is published — after every step, every console statement, every press of
+**Locks** — so what is on screen is the database as it is now. Nothing is read
+while the tab is closed.
+
+The read runs on a session of the run's own, in autocommit, taking no locks. One
+consequence is stated rather than hidden: it sees **committed rows only**. A row
+an actor has inserted and not committed is not in the table, though its lock is
+— so locks whose key matches no visible row are listed underneath as such,
+rather than being quietly dropped. That gap between "locked" and "visible" is
+usually the whole finding.
 
 The **SQL** tab is a console on the run in front of you. Pick where a statement
 goes: an actor's connection, where it lands inside that actor's open transaction
@@ -266,6 +307,27 @@ than removed.
 Scenarios live in `cases/`, one YAML file each, organised into folders that
 become categories. The playground (**New scenario**) is the fast path: edit,
 **Run**, and only **Save** once it earns a place in the library.
+
+Nothing reaches `cases/` until you press Save, but the text is never only in the
+editor either: it is kept as a **draft** as you type. That matters at one
+particular moment — pressing **Run** opens the run page, and a scenario you were
+still writing used to be gone by the time you had watched it. Now the run page
+carries **Edit the draft** back to exactly the text it was started from, the
+drafts are listed in the sidebar from wherever you end up, and the draft is in
+the address bar so a reload lands on it.
+
+Drafts are deliberately *not* versioned. Scenario history exists so that a
+working example is never lost to an edit, and it starts the moment a draft
+becomes a file; while it is still being written, every keystroke as a revision
+would not be history, it would be noise. Saving to the library is what makes the
+first version — and it discards the draft, so there is never a second copy
+claiming to be current. **Discard draft** throws one away, in the editor or from
+the sidebar.
+
+Editing a scenario that already exists works the same way: unsaved changes are
+held as a draft against that file and offered back the next time you open it,
+with the note saying how old they are. Putting the text back exactly as it was
+on disk drops the draft, because that is not a pending change.
 
 ![A scenario's sequence view](docs/screenshots/details.png)
 

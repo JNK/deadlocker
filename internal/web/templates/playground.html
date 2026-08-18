@@ -16,7 +16,8 @@
         {{else}}
         <p class="lede">
           Write a scenario, run it immediately, and save it to the library once it earns its place.
-          Nothing is written to disk until you press Save.
+          Nothing is written to the case directory until you press Save — but the text is kept as a
+          draft as you type, so running it is never a way to lose it.
         </p>
         {{end}}
         {{if .Message}}<p class="notice">{{.Message}}</p>{{end}}
@@ -46,6 +47,12 @@
             {{else}}
             <input type="hidden" id="pg-path" value="">
             {{end}}
+            <!-- The draft state, beside the dirty state, because they answer
+                 two different questions: "is this different from the file" and
+                 "is this text safe if I navigate away". -->
+            <span class="muted pg-draft" id="pg-draft" hidden></span>
+            <button class="btn btn-ghost btn-sm" id="pg-draft-discard" type="button" hidden
+                    title="Throw the draft away">Discard draft</button>
             <span class="muted" id="pg-dirty">no changes</span>
             <button class="btn btn-sm{{if .Editing}} btn-primary{{end}}" id="pg-save" type="button" disabled>
               {{if .Editing}}Save changes{{else}}Save to library{{end}}
@@ -68,7 +75,11 @@
           <h2>Steps</h2>
           <span class="muted" id="pg-valid"></span>
           <div class="panel-head-actions">
-            <button class="btn btn-sm" id="pg-run" type="button">Test run</button>
+            <!-- Deliberately not the header's Run button: this one keeps you in
+                 the editor and steps beside the text, that one opens the full
+                 run page. They used to share an id, so pressing Run started two
+                 runs and navigated away from one of them. -->
+            <button class="btn btn-sm" id="pg-test-run" type="button">Test run</button>
           </div>
         </div>
 
@@ -113,7 +124,20 @@
 <script src="/static/sidebar.js"></script>
 <script src="/static/yaml.js"></script>
 <script src="/static/runpane.js"></script>
-<script>window.DL_EDITING = {{if .Editing}}true{{else}}false{{end}};</script>
+<script>
+  window.DL_EDITING = {{if .Editing}}true{{else}}false{{end}};
+  // The draft this editor is attached to, if it already has one. A fresh
+  // playground has none until the first keystroke earns it.
+  window.DL_DRAFT = {
+    id: "{{if .Draft}}{{.Draft.ID}}{{end}}",
+    scenarioID: "{{if .Case}}{{.Case.ID}}{{end}}",
+    path: "{{if .Case}}{{.Case.Path}}{{end}}"
+  };
+  // What is on disk, when this editor is editing a file. The buffer above may be
+  // a draft of unsaved changes to it, so "has this changed" cannot be answered
+  // against the buffer it was loaded with.
+  window.DL_FILE_SOURCE = {{if .Editing}}{{json .Case.Source}}{{else}}null{{end}};
+</script>
 <script src="/static/playground.js"></script>
 {{template "assistant-mount" .}}
 </body>

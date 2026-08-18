@@ -589,6 +589,20 @@ func (s *Server) handlePalette(w http.ResponseWriter, r *http.Request) {
 			URL:      "/run/" + run.RunID,
 		})
 	}
+	// Drafts are the most likely thing anyone is trying to get back to, since by
+	// definition they are what was being worked on.
+	for _, d := range pd.Drafts {
+		sub := "draft"
+		if d.ScenarioID != "" {
+			sub = "draft · unsaved changes"
+		}
+		items = append(items, paletteItem{
+			Kind: "draft", Title: d.Name, Subtitle: sub,
+			Detail: d.UpdatedAt.Format("15:04:05"),
+			Terms:  []string{d.ID, d.ScenarioID, "draft", "unsaved"},
+			URL:    "/playground?draft=" + d.ID,
+		})
+	}
 	for _, j := range s.api.Jobs().All() {
 		kind := "matrix"
 		if j.Kind != "isolation-matrix" {

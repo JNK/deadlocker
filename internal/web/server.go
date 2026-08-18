@@ -199,12 +199,22 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /playground/validate", s.handleValidate)
 	mux.HandleFunc("POST /playground/save", s.handleSave)
 
+	// Drafts: the editor's buffer, kept somewhere that survives navigating away
+	// to watch it run.
+	mux.HandleFunc("GET /api/drafts", s.handleDrafts)
+	mux.HandleFunc("POST /api/drafts", s.handleSaveDraft)
+	mux.HandleFunc("POST /api/drafts/{id}/discard", s.handleDiscardDraft)
+
 	mux.HandleFunc("POST /run", s.handleStartRun)
 	mux.HandleFunc("GET /run/{id}", s.handleRunPage)
 	mux.HandleFunc("GET /run/{id}/events", s.handleEvents)
 	mux.HandleFunc("POST /run/{id}/step", s.handleStep)
 	mux.HandleFunc("POST /run/{id}/play", s.handlePlay)
 	mux.HandleFunc("POST /run/{id}/snapshot", s.handleSnapshot)
+	// The data pane: the tables the locks are about, read on a session of the
+	// run's own.
+	mux.HandleFunc("GET /run/{id}/tables", s.handleTables)
+	mux.HandleFunc("GET /run/{id}/table", s.handleTableData)
 	// The SQL console: statements typed at a live run, either on an actor's own
 	// connection or on a standalone one.
 	mux.HandleFunc("POST /run/{id}/console", s.handleConsole)
@@ -280,6 +290,16 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	pd.ActiveCase = c.ID
 	pd.Source = c.Source
 	pd.Editing = true
+	// Edits that were never saved are still edits. Opening the editor on the
+	// file and silently dropping them would be the same trap drafts exist to
+	// close, so they are offered back with a way to throw them away.
+	if d, found, err := s.store.DraftForScenario(c.ID); err == nil && found && d.Source != c.Source {
+		pd.Source = d.Source
+		pd.Draft = &d
+		pd.ActiveDraft = d.ID
+		pd.Message = "Showing unsaved changes from " + humanDuration(time.Since(d.UpdatedAt)) +
+			" ago. Discard the draft to go back to what is on disk."
+	}
 	s.render(w, "playground.html", pd)
 }
 
@@ -307,6 +327,11 @@ type pageData struct {
 	Case        *casedef.Case
 	Source      string
 	Description template.HTML
+
+	// Draft is the unsaved buffer the editor is showing, when it is showing one.
+	Draft *store.Draft
+	// Drafts is the sidebar's list of scenarios still being written.
+	Drafts []draftView
 	// VersionCount is how many revisions the scenario has, shown on the tab.
 	VersionCount int
 
@@ -341,6 +366,8 @@ type pageData struct {
 	ActiveCase string
 	// ActiveRun highlights the run being viewed.
 	ActiveRun string
+	// ActiveDraft highlights the draft being edited.
+	ActiveDraft string
 	// OpenBuilder opens the assistant sheet as soon as the page loads.
 	OpenBuilder bool
 
@@ -482,6 +509,15 @@ func (s *Server) base(title, nav string) *pageData {
 		}
 	}
 
+	// Scenarios still being written. They are listed on every page because the
+	// point of a draft is being able to get back to it from wherever you ended
+	// up -- which is usually a run page, watching the thing you just wrote.
+	if drafts, err := s.store.Drafts(12); err == nil {
+		for _, d := range drafts {
+			pd.Drafts = append(pd.Drafts, newDraftView(d))
+		}
+	}
+
 	// Analyses are listed beside the runs: each is a batch of runs with a
 	// conclusion, which is worth keeping visible while it works.
 	for i, job := range s.api.Jobs().All() {
@@ -597,6 +633,34 @@ func (s *Server) handlePlayground(w http.ResponseWriter, r *http.Request) {
 	pd := s.base("Playground", "playground")
 	pd.FormatDoc = markdown.Render(agentapi.FormatDoc)
 	pd.Source = starterYAML
+
+	// A draft is the buffer you left behind — coming back to it is the whole
+	// point of having one, so it wins over anything else the URL asks for.
+	if id := r.URL.Query().Get("draft"); id != "" {
+		d, ok, err := s.store.Draft(id)
+		switch {
+		case err != nil:
+			pd.Error = err.Error()
+		case !ok:
+			pd.Message = "That draft is gone — it was saved to the library, discarded, or aged out. This is a fresh one."
+		default:
+			pd.Source = d.Source
+			pd.Draft = &d
+			pd.ActiveDraft = d.ID
+			pd.Title = d.Name
+			if d.ScenarioID != "" {
+				if c, found := s.lib.Get(d.ScenarioID); found {
+					pd.Case = c
+					pd.ActiveCase = c.ID
+					pd.Editing = true
+					pd.Message = "Unsaved changes to " + c.Name + ", picked up where you left them."
+				}
+			}
+		}
+		s.render(w, "playground.html", pd)
+		return
+	}
+
 	if from := r.URL.Query().Get("from"); from != "" {
 		if c, ok := s.lib.Get(from); ok {
 			pd.Source = c.Source
@@ -633,6 +697,9 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		Path   string `json:"path"`
 		Source string `json:"source"`
 		Note   string `json:"note"`
+		// DraftID is the buffer this came from. Saving is what turns a draft into
+		// a file with a history, so the draft goes when the file lands.
+		DraftID string `json:"draft_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
@@ -659,7 +726,119 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// The file is the scenario now, and its history starts here. Keeping the
+	// draft as well would leave two copies claiming to be current, which is the
+	// one thing worse than having neither.
+	if id := strings.TrimSpace(req.DraftID); id != "" {
+		_ = s.store.DeleteDraft(id)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": c.ID, "path": c.Path})
+}
+
+// ------------------------------------------------------------------- drafts
+//
+// A draft is the editor's buffer, kept server-side. It exists so that pressing
+// Run is not a decision to lose what you were writing: the run page can link
+// back to the exact text that produced it, and the sidebar can list what is
+// still unfinished.
+
+// draftView is a draft as the UI reads it. The source is only sent when one
+// draft is asked for; a listing wants names and times, not a dozen documents.
+type draftView struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	ScenarioID string    `json:"scenario_id,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	Steps      int       `json:"steps"`
+	Actors     int       `json:"actors"`
+	Valid      bool      `json:"valid"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func newDraftView(d store.Draft) draftView {
+	v := draftView{
+		ID: d.ID, Name: d.Name, ScenarioID: d.ScenarioID, Path: d.Path,
+		UpdatedAt: d.UpdatedAt, CreatedAt: d.CreatedAt,
+	}
+	// A draft is usually mid-sentence and does not parse; that is not an error,
+	// it is what a draft is. When it does parse, its shape is worth showing.
+	if c, err := casedef.Parse([]byte(d.Source)); err == nil {
+		v.Valid = true
+		v.Steps = len(c.Steps)
+		v.Actors = len(c.Actors)
+		if v.Name == "" || v.Name == store.UntitledDraft {
+			v.Name = c.Name
+		}
+	}
+	return v
+}
+
+// draftName reads the name out of a draft's YAML, so the list says what the
+// scenario calls itself rather than "Untitled" for everything.
+func draftName(source string) string {
+	if c, err := casedef.Parse([]byte(source)); err == nil && strings.TrimSpace(c.Name) != "" {
+		return c.Name
+	}
+	// It does not parse yet, which is normal while typing. The name line usually
+	// does, long before the rest of the document.
+	for _, line := range strings.Split(source, "\n") {
+		if rest, ok := strings.CutPrefix(line, "name:"); ok {
+			if n := strings.TrimSpace(strings.Trim(strings.TrimSpace(rest), `"'`)); n != "" {
+				return n
+			}
+		}
+	}
+	return store.UntitledDraft
+}
+
+func (s *Server) handleDrafts(w http.ResponseWriter, r *http.Request) {
+	drafts, err := s.store.Drafts(0)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	out := make([]draftView, 0, len(drafts))
+	for _, d := range drafts {
+		out = append(out, newDraftView(d))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "drafts": out})
+}
+
+// handleSaveDraft upserts the editor's buffer. It is called as you type, so it
+// does nothing expensive and never validates: a draft that does not parse is
+// exactly the one you most need kept.
+func (s *Server) handleSaveDraft(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID         string `json:"id"`
+		Source     string `json:"source"`
+		ScenarioID string `json:"scenario_id"`
+		Path       string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	saved, err := s.store.SaveDraft(store.Draft{
+		ID:         strings.TrimSpace(req.ID),
+		Name:       draftName(req.Source),
+		Source:     req.Source,
+		ScenarioID: strings.TrimSpace(req.ScenarioID),
+		Path:       strings.TrimSpace(req.Path),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "draft": newDraftView(saved)})
+}
+
+func (s *Server) handleDiscardDraft(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteDraft(r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
@@ -671,6 +850,8 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if ct := r.Header.Get("Content-Type"); strings.HasPrefix(ct, "application/json") {
 		var req struct {
 			Source string `json:"source"`
+			// DraftID ties the run back to the editor buffer it came from.
+			DraftID string `json:"draft_id"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
@@ -685,6 +866,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		// but no saved scenario owns it, so it must not surface in the sidebar
 		// or in any scenario's history.
 		c.Ephemeral = true
+		c.DraftID = strings.TrimSpace(req.DraftID)
 		if c.ID == "" {
 			c.ID = "draft"
 		}
@@ -694,6 +876,40 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Restarting a run of a draft: there is no file to look up, so the draft
+	// itself is what gets re-run. Without this, "restart from the top" on a draft
+	// run was a 404 for a scenario id that never existed.
+	if draftID := strings.TrimSpace(r.FormValue("draft_id")); draftID != "" {
+		d, found, err := s.store.Draft(draftID)
+		if err != nil || !found {
+			s.renderMissing(w, "playground", missingPage{
+				Title:   "Draft not found",
+				Heading: "This draft is gone",
+				Body: "It was saved to the library, discarded, or aged out of the drafts list. " +
+					"Its runs outlive it, so a link from one can land here.",
+				ID: draftID,
+				Actions: []missingAction{
+					{Label: "Write a new one", URL: "/playground", Primary: true},
+					{Label: "Browse scenarios", URL: "/"},
+				},
+			})
+			return
+		}
+		c, err := casedef.Parse([]byte(d.Source))
+		if err != nil {
+			pd := s.base("Run failed", "playground")
+			pd.Error = err.Error()
+			s.render(w, "error.html", pd)
+			return
+		}
+		c.Ephemeral = true
+		c.DraftID = d.ID
+		if c.ID == "" {
+			c.ID = "draft"
+		}
+		s.startAndRespond(w, r, c, false)
 		return
 	}
 	caseID := r.FormValue("case_id")
@@ -872,6 +1088,43 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := run.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "locks": snap})
+}
+
+// handleTables lists the tables of a run's scratch database, with their
+// indexes. The index matters as much as the table: InnoDB locks index records,
+// so "which index" is half of what a lock is.
+func (s *Server) handleTables(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	tables, err := run.TableList(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "tables": tables, "database": run.State().Database,
+	})
+}
+
+// handleTableData reads one table in the order of one index, with the run's
+// current locks drawn onto the rows and gaps they cover.
+func (s *Server) handleTableData(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	view, err := run.TableView(r.Context(), q.Get("name"), q.Get("index"), limit)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "view": view})
 }
 
 // handleConsole runs one typed statement against a live run.
@@ -1140,6 +1393,8 @@ func (s *Server) renderArchivedRun(w http.ResponseWriter, rec *engine.Record) {
 		LockWaitTimeout: rec.LockWaitTimeout, Started: rec.StartedAt,
 		Total: len(rec.Steps), Cursor: rec.Submitted,
 		DeadlockReport: rec.DeadlockReport,
+		Ephemeral:      rec.Ephemeral,
+		DraftID:        rec.DraftID,
 	}
 
 	seen := map[string]bool{}

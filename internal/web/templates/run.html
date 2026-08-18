@@ -8,7 +8,14 @@
   <main class="main run-main" id="run-root" data-run="{{.Run.ID}}">
     <header class="run-header">
       <div class="run-title">
+        <!-- A run of a draft has no scenario page to go back to; it has an
+             editor, which is where its text still is. -->
+        {{if .Run.DraftID}}
+        <div class="crumb"><a href="/">Scenarios</a> <span>/</span>
+          <a href="/playground?draft={{.Run.DraftID}}">draft</a></div>
+        {{else}}
         <div class="crumb"><a href="/">Scenarios</a> <span>/</span> <a href="/case/{{.Run.CaseID}}">{{.Run.CaseName}}</a></div>
+        {{end}}
         <h1>{{.Run.CaseName}}</h1>
         <div class="badge-row">
           <span class="chip chip-status" data-run-status>{{.Run.Status}}</span>
@@ -24,6 +31,16 @@
       </div>
 
       <div class="run-controls">
+        <!-- The first thing anyone wants after watching a scenario they are
+             still writing is the line they want to change. It is a control, not
+             a menu item three clicks away. -->
+        {{if .Run.DraftID}}
+        <a class="btn btn-ghost" href="/playground?draft={{.Run.DraftID}}"
+           title="Back to the editor, with this scenario as you left it">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16z"/></svg>
+          Edit the draft
+        </a>
+        {{end}}
         {{if .Archived}}
         <!-- The recorded outcome comes first and uses the same vocabulary the
              sidebar does, so the two cannot appear to disagree about the same
@@ -63,13 +80,27 @@
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
           </button>
           <div class="menu-list" id="more-menu" hidden>
-            <form method="post" action="/run"><input type="hidden" name="case_id" value="{{.Run.CaseID}}">
+            <!-- A draft run has no file to restart from, so it restarts from the
+                 draft. Naming the case id would be a 404 for a scenario that
+                 was never saved. -->
+            <form method="post" action="/run">
+              {{if .Run.DraftID}}
+              <input type="hidden" name="draft_id" value="{{.Run.DraftID}}">
+              {{else}}
+              <input type="hidden" name="case_id" value="{{.Run.CaseID}}">
+              {{end}}
               <button type="submit" class="menu-item">Restart from the top</button>
             </form>
+            {{if not .Run.Ephemeral}}
             <a class="menu-item" href="/case/{{.Run.CaseID}}#case=history">Run history for this scenario</a>
+            {{end}}
             <a class="menu-item" href="/compare">Compare two runs</a>
             <a class="menu-item" href="/run/{{.Run.ID}}/export">Export run as JSON</a>
+            {{if .Run.DraftID}}
+            <a class="menu-item" href="/playground?draft={{.Run.DraftID}}">Back to the draft</a>
+            {{else}}
             <a class="menu-item" href="/playground?from={{.Run.CaseID}}">Edit this scenario</a>
+            {{end}}
             {{if not .Archived}}
             <button class="menu-item menu-item-danger" id="btn-close-run" type="button">Close run &amp; drop database</button>
             {{end}}
@@ -147,6 +178,11 @@
           <button class="dock-tab is-active" data-tab="step" type="button">Step</button>
           <button class="dock-tab" data-tab="locks" type="button">Locks <span class="tab-count" data-count="locks"></span></button>
           {{if not .Archived}}
+          <!-- The tables the locks are about, and the console. A closed run has
+               neither: its scratch database was dropped, so there is nothing to
+               read and nothing to type at. -->
+          <button class="dock-tab" data-tab="data" type="button"
+                  title="The rows the locks are on, in index order">Data</button>
           <button class="dock-tab" data-tab="console" type="button"
                   title="Type SQL at this run, as an actor or on a connection of your own">SQL <span class="tab-count" data-count="console"></span></button>
           {{end}}
@@ -181,6 +217,23 @@
             <div id="locks-table"></div>
             <div id="locks-trx"></div>
           </div>
+
+          {{if not .Archived}}
+          <!-- The data pane. Several tables can be open side by side, because a
+               foreign-key scenario is two tables or it is nothing. -->
+          <div class="dock-panel dock-panel-data" data-panel="data">
+            <div class="dock-toolbar">
+              <button class="btn btn-ghost btn-sm" id="data-add" type="button">Add a table</button>
+              <button class="btn btn-ghost btn-sm" id="data-refresh" type="button"
+                      title="Read the tables again now">Refresh</button>
+              <div class="dock-toolbar-spacer"></div>
+              <span class="muted">read on a session of its own — committed rows only</span>
+            </div>
+            <div class="data-split" id="data-views">
+              <div class="dock-empty">Opening the tables…</div>
+            </div>
+          </div>
+          {{end}}
 
           {{if not .Archived}}
           <!-- The console. Which connection a statement runs on is the whole
@@ -272,6 +325,7 @@
 <script src="/static/deadlock.js"></script>
 <script src="/static/runpane.js"></script>
 <script src="/static/run.js"></script>
+<script src="/static/data.js"></script>
 {{template "assistant-mount" .}}
 </body>
 </html>

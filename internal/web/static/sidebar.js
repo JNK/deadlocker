@@ -173,10 +173,13 @@
     if (compareBar) compareBar.hidden = !on;
     if (compareToggle) compareToggle.classList.toggle('is-active', on);
 
-    // Analyses and unparseable files are not runs, so while picking two runs
-    // they are noise. They come back the moment picking ends.
+    // Analyses, drafts and unparseable files are not runs, so while picking two
+    // runs they are noise. They come back the moment picking ends.
     if (jobsWrap) {
       jobsWrap.hidden = on || !jobsHost.querySelector('[data-job-id]');
+    }
+    if (draftsWrap) {
+      draftsWrap.hidden = on || !draftsHost.querySelector('[data-draft-id]');
     }
     var broken = document.getElementById('sidebar-broken');
     if (broken) broken.hidden = on;
@@ -307,6 +310,96 @@
         .catch(function () {});
     }, 250);
   }
+
+  // -------------------------------------------------------------- drafts
+  //
+  // Scenarios that are still being written. They are listed here because the
+  // place you need one back from is wherever you went to test it, which is
+  // almost never the editor you left.
+
+  var draftsWrap = document.getElementById('sidebar-drafts');
+  var draftsHost = document.getElementById('sidebar-drafts-list');
+  var draftsCountEl = document.getElementById('drafts-count');
+
+  function activeDraftID() {
+    var m = window.location.search.match(/[?&]draft=([a-z0-9]+)/);
+    return m ? m[1] : '';
+  }
+
+  function draftChipHTML(d) {
+    var meta = d.valid
+      ? '<span class="mono">' + d.steps + ' step' + (d.steps === 1 ? '' : 's') + '</span>'
+      : '<span class="draft-chip-wip">in progress</span>';
+    if (d.scenario_id) {
+      meta += '<span class="draft-chip-edit" title="Unsaved changes to a scenario in the library">edits</span>';
+    }
+    meta += '<span class="run-chip-time">' + esc(clockOf(d.updated_at)) + '</span>';
+    return '<span class="draft-chip-body">' +
+      '<span class="draft-chip-name">' + esc(d.name) + '</span>' +
+      '<span class="draft-chip-meta">' + meta + '</span>' +
+      '</span>';
+  }
+
+  function reconcileDrafts(drafts) {
+    if (!draftsHost || !draftsWrap) return;
+    draftsWrap.hidden = !drafts.length || picking;
+    if (draftsCountEl) {
+      draftsCountEl.textContent = drafts.length
+        ? drafts.length + ' draft' + (drafts.length === 1 ? '' : 's') : 'Drafts';
+    }
+    var active = activeDraftID();
+    draftsHost.innerHTML = drafts.map(function (d) {
+      return '<div class="draft-row' + (d.id === active ? ' is-active' : '') +
+        '" data-draft-id="' + esc(d.id) + '">' +
+        '<a class="draft-chip" href="/playground?draft=' + encodeURIComponent(d.id) + '">' +
+        draftChipHTML(d) + '</a>' +
+        '<button class="run-forget" type="button" data-discard-draft ' +
+        'aria-label="Discard this draft" title="Discard this draft">' + TRASH + '</button>' +
+        '</div>';
+    }).join('');
+  }
+
+  var draftsPending = 0;
+  function refreshDrafts() {
+    if (!draftsHost) return;
+    clearTimeout(draftsPending);
+    draftsPending = setTimeout(function () {
+      fetch('/api/drafts')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (res) { if (res && res.ok) reconcileDrafts(res.drafts || []); })
+        .catch(function () {});
+    }, 250);
+  }
+
+  if (draftsHost) {
+    draftsHost.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-discard-draft]');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var row = btn.closest('[data-draft-id]');
+      var id = row && row.dataset.draftId;
+      if (!id) return;
+      window.DL.confirm({
+        title: 'Discard this draft?',
+        body: 'The text goes with it. Drafts are not versioned — only saving to ' +
+          'the library keeps a scenario.',
+        confirm: 'Discard it',
+        cancel: 'Keep it',
+        danger: true
+      }).then(function (ok) {
+        if (!ok) return;
+        row.remove();
+        window.DL.postJSON('/api/drafts/' + encodeURIComponent(id) + '/discard', {})
+          .then(refreshDrafts)
+          .catch(refreshDrafts);
+      });
+    });
+  }
+
+  // The editor autosaves as you type; the list is one of the two places that
+  // has to agree with it.
+  window.addEventListener('dl-draft-saved', refreshDrafts);
 
   // ------------------------------------------------------------ analyses
 

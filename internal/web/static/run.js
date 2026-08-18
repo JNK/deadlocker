@@ -461,10 +461,16 @@
   }
 
   // setSnapshot records a new lock snapshot and the delta from the last one.
+  //
+  // It is also the page's "something happened" signal: a snapshot is taken
+  // after every step, every console statement and every press of the Locks
+  // button, which is precisely when the tables can have changed too. The data
+  // pane listens rather than polling.
   function setSnapshot(snap) {
     if (!snap) return;
     state.lockDelta = state.locks ? diffLocks(state.locks, snap) : null;
     state.locks = snap;
+    window.dispatchEvent(new CustomEvent('dl-locks', { detail: snap }));
   }
 
   function renderLocks() {
@@ -594,6 +600,10 @@
     var a = allSessions().filter(function (x) { return x.id === id; })[0];
     return a ? a.name : id;
   }
+
+  // The data pane names lock holders too, and there must be exactly one answer
+  // to "whose lock is that" on this page.
+  window.DL.runActorName = actorName;
 
   // ----------------------------------------------------------------- wire
 
@@ -1182,6 +1192,7 @@
       case 'state':
         state.run = ev.state;
         renderRunState();
+        window.dispatchEvent(new CustomEvent('dl-run-state', { detail: ev.state }));
         break;
       case 'step':
         stepsByIndex[ev.step.index] = ev.step;
@@ -1425,6 +1436,9 @@
     document.querySelectorAll('.dock-panel').forEach(function (p) {
       p.classList.toggle('is-active', p.dataset.panel === name);
     });
+    // Panes that only do work while they are on screen -- the data pane reads
+    // the database -- find out here that they are.
+    window.dispatchEvent(new CustomEvent('dl-dock-tab', { detail: name }));
     if (name === 'wire') renderWireAll();
     if (name === 'docker') renderDockerAll();
     if (name === 'console' && consoleSQL) {

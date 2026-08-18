@@ -89,7 +89,7 @@
   // ------------------------------------------------------------ rendering
 
   var KIND_LABEL = {
-    scenario: 'scenario', run: 'run', analysis: 'analysis', go: 'go to'
+    scenario: 'scenario', run: 'run', analysis: 'analysis', draft: 'draft', go: 'go to'
   };
 
   function render() {
