@@ -209,6 +209,78 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": saved.Version})
 }
 
+// ------------------------------------------------------- command palette
+
+// paletteItem is one addressable thing in the app.
+type paletteItem struct {
+	Kind     string   `json:"kind"`
+	Title    string   `json:"title"`
+	Subtitle string   `json:"subtitle,omitempty"`
+	Detail   string   `json:"detail,omitempty"`
+	Terms    []string `json:"terms,omitempty"`
+	URL      string   `json:"url"`
+}
+
+// handlePalette returns everything the command palette can jump to.
+//
+// The whole index is sent at once and matched in the browser: a local library
+// is a few dozen scenarios and a few dozen runs, so a round trip per keystroke
+// would buy nothing and cost responsiveness.
+func (s *Server) handlePalette(w http.ResponseWriter, r *http.Request) {
+	pd := s.base("", "")
+
+	items := make([]paletteItem, 0, 64)
+	for _, c := range s.lib.List() {
+		terms := append([]string{c.ID, c.Path}, c.Tags...)
+		// The description is searchable but not shown in full: matching on
+		// "insert intention" should find the scenario that explains it.
+		items = append(items, paletteItem{
+			Kind: "scenario", Title: c.Name, Subtitle: c.Category,
+			Detail: firstSentence(c.Description),
+			Terms:  append(terms, c.Description),
+			URL:    "/case/" + c.ID,
+		})
+	}
+	for _, run := range pd.Runs {
+		status := run.Outcome
+		if run.Live {
+			status = "live"
+		}
+		items = append(items, paletteItem{
+			Kind: "run", Title: run.CaseName,
+			Subtitle: "run · " + status,
+			Detail:   run.RunID,
+			Terms:    []string{run.RunID, run.CaseID},
+			URL:      "/run/" + run.RunID,
+		})
+	}
+	for _, j := range s.api.Jobs().All() {
+		kind := "matrix"
+		if j.Kind != "isolation-matrix" {
+			kind = "minimal repro"
+		}
+		items = append(items, paletteItem{
+			Kind: "analysis", Title: j.Name,
+			Subtitle: "analysis · " + kind, Detail: j.Status,
+			Terms: []string{j.ID, j.ScenarioID},
+			URL:   "/analysis/" + j.ID,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "items": items})
+}
+
+// firstSentence trims a description down to something that fits on one line.
+func firstSentence(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	if i := strings.Index(s, ". "); i > 0 {
+		s = s[:i+1]
+	}
+	if len(s) > 120 {
+		s = strings.TrimSpace(s[:120]) + "…"
+	}
+	return s
+}
+
 // ------------------------------------------------------- scenario versions
 
 // handleScenarioVersions lists a scenario's revision history.

@@ -43,6 +43,36 @@ you have seen it happen.
   OpenAI-compatible endpoint, so it can check a claim about MySQL by running it
   rather than asserting it.
 
+## Running it from the command line
+
+Scenarios are executable claims about how MySQL behaves, and a claim nobody
+checks rots. The `run` subcommand plays them without the UI and exits non-zero
+when any step disagrees with what its scenario declares:
+
+```sh
+deadlocker run                                    # the whole library
+deadlocker run classic-ab-ba-deadlock             # one scenario
+deadlocker run -format junit -o results.xml       # for CI
+deadlocker run -format json | jq '.scenarios[0]'
+deadlocker run -isolation "READ COMMITTED" uuidv7-missing-row-gap-lock
+```
+
+`-isolation` overrides the level for every scenario named, which is the quickest
+way to ask "what would READ COMMITTED do here" — the gap lock scenario above
+duly fails under it, because that is the whole point of the scenario:
+
+```
+FAIL  SELECT FOR UPDATE on a missing UUIDv7 row blocks the next insert
+   uuidv7-missing-row-gap-lock · READ COMMITTED · 4.8s
+   !  4 b      done     Insert a brand new booking
+        expected blocks, observed ok
+```
+
+The JUnit output is one testsuite per scenario and one testcase per step, so a
+mismatch points at the exact statement rather than at the file. Progress goes to
+stderr and the report to stdout, so piping `-format json` gives something a
+parser will accept.
+
 ## Running it
 
 Requires Go 1.22+ and a running Docker daemon.
@@ -77,9 +107,20 @@ build step and no npm.
 
 ## Using the UI
 
+<kbd>⌘K</kbd> (<kbd>Ctrl K</kbd> elsewhere), or **Search** in the sidebar
+footer, opens the command palette, which
+searches scenarios by name, category, tag and description text, runs by id, and
+analyses — plus the handful of destinations that are otherwise a click into a
+menu. Ranking prefers a title prefix over a mid-word hit over a subsequence, so
+typing `gap` lands on the scenario named after gap locks rather than one that
+merely mentions them.
+
 **Step** submits the next statement. **Play** runs until the scenario ends or an
 actor blocks. <kbd>Space</kbd> steps, <kbd>↑</kbd>/<kbd>↓</kbd> move between
-steps, <kbd>/</kbd> focuses the scenario filter.
+steps, <kbd>/</kbd> focuses the scenario filter. The arrow keys navigate steps
+while the dock's **Step** pane is open; with any other pane open they scroll it
+instead, since those panes are long lists you read rather than step through.
+<kbd>j</kbd>/<kbd>k</kbd> always navigate.
 
 The timeline is one column per actor. A step that does not return within the
 settle window is marked **blocked** and left running — that is the point. Advance
@@ -92,8 +133,21 @@ one statement at a time. If you hit that, the scenario needs the unblocking step
 to come next.
 
 The dock at the bottom has: the selected step's result or error (with a note on
-what the error actually did to your transaction), the live lock table, the
-decoded packet stream, the container log, and the InnoDB deadlock report.
+what the error actually did to your transaction), the live lock table with the
+wait-for graph, the decoded packet stream, the container log, and the InnoDB
+deadlock report. It collapses to its tab bar when you want the timeline
+full-height, and remembers that.
+
+The **Locks** tab draws the wait-for graph — one node per actor, one arrow per
+wait edge, the cycle highlighted when one closes. That graph *is* what InnoDB's
+deadlock detector looks at, so watching a cycle appear is watching the thing
+that is about to roll a transaction back.
+
+The **Deadlock report** tab shows `SHOW ENGINE INNODB STATUS`'s account of what
+happened, syntax-highlighted: the two transactions, which locks each held and
+waited for, the offending statements, and which one was rolled back. The hex
+dump of the locked records — nine tenths of the raw output — is dimmed rather
+than removed.
 
 ## Writing a scenario
 
@@ -171,7 +225,8 @@ wrong lesson. Set it low deliberately when the timeout *is* the lesson.
 
 **Fundamentals** — record locks on an existing row · shared vs exclusive
 compatibility · why a lock wait timeout leaves the transaction open and holding
-locks.
+locks · the intention locks behind every row lock, and what `LOCK TABLES`
+collides with · `NOWAIT` and `SKIP LOCKED`, the two ways to refuse to wait.
 
 **Gap locks** — the UUIDv7 case: `SELECT ... FOR UPDATE` on a missing row locks
 the supremum gap and blocks every new time-ordered insert · the same scenario
@@ -181,8 +236,12 @@ what a range scan locks (including one record past the range).
 **Deadlocks** — the classic AB-BA cycle · check-then-insert, where two
 compatible gap locks turn into a deadlock the moment both sides insert · the
 three-way duplicate key deadlock caused by InnoDB's shared lock on a duplicate ·
-what happens when you disable `innodb_deadlock_detect` (both sides time out,
-which is worse).
+`SELECT … FOR SHARE` followed by an `UPDATE`, where two *identical* transactions
+deadlock on a lock upgrade · a foreign key doing the same thing invisibly when
+you insert the child before updating the parent · two sessions both locking in
+"ascending order" and still deadlocking, because their indexes disagree about
+what ascending means · what happens when you disable `innodb_deadlock_detect`
+(both sides time out, which is worse).
 
 **Isolation levels** — `SERIALIZABLE` silently making every plain `SELECT` a
 locking read · MVCC consistent reads never blocking and never being blocked.
@@ -202,19 +261,52 @@ trace.
 Every scenario in the library is verified against a real server:
 
 ```sh
-go run ./cmd/deadlocker &        # in one shell
-hack/verify.py                   # in another
+go run ./cmd/deadlocker run      # no server needed; exits non-zero on a mismatch
+
+go run ./cmd/deadlocker &        # or, against a running server:
+hack/verify.py                   # same checks plus the lock-mode coverage report
 go run ./hack/mcpprobe           # drives the MCP server as a real client
 ```
 
 `verify.py` runs each case end to end and fails if any step's observed behaviour
-stops matching its declared expectation. All 17 currently pass on MySQL 8.4.11.
+stops matching its declared expectation. All 24 currently pass on MySQL 8.4.11.
 
-The pure front-end logic — YAML highlighting and completion — has its own
+It also samples `performance_schema.data_locks` after every step and reports
+which lock modes the library actually demonstrated. That is what backs the claim
+of full coverage — not that a scenario is *named* after a gap lock, but that one
+was observed while it ran:
+
+```
+lock modes observed across the library
+  ok   TABLE     IS
+  ok   TABLE     IX
+  ok   TABLE     S
+  ok   TABLE     X
+  ok   RECORD    S              S,REC_NOT_GAP    S,GAP
+  ok   RECORD    X              X,REC_NOT_GAP    X,GAP
+  ok   RECORD    X,INSERT_INTENTION
+  ok   RECORD    supremum pseudo-record
+  ok   METADATA  SHARED_READ    SHARED_WRITE     EXCLUSIVE
+```
+
+The check earned its keep immediately: it caught that the table lock scenario
+was demonstrating a metadata lock rather than an InnoDB table lock, because
+`LOCK TABLES` only takes the latter when `autocommit` is off.
+
+One lock type is deliberately absent. The table-level **AUTO-INC** lock cannot
+be shown here: MySQL 8's default `innodb_autoinc_lock_mode = 2` never takes one,
+and the variable is read-only at runtime, so a scenario cannot opt into it the
+way it can opt into `autocommit = 0`.
+
+The pure front-end logic — YAML highlighting and completion, the command
+palette's ranking, and the CSS invariants that have broken before — has its own
 browser-free tests, and the Markdown renderer is tested in Go:
 
 ```sh
 node hack/yaml_test.js
+node hack/palette_test.js
+node hack/deadlock_test.js
+node hack/css_test.js
 go test ./...
 ```
 

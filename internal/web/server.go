@@ -207,6 +207,9 @@ func (s *Server) Routes() http.Handler {
 	// clone.
 	mux.HandleFunc("GET /edit/{id}", s.handleEdit)
 
+	// The command palette's whole index, matched in the browser.
+	mux.HandleFunc("GET /api/palette", s.handlePalette)
+
 	// Scenario history. Every save is recorded, so an edit that turns out to be
 	// wrong is one click away from being undone.
 	mux.HandleFunc("GET /api/case/{id}/versions", s.handleScenarioVersions)

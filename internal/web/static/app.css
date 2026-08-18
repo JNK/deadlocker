@@ -943,30 +943,32 @@ table.data tr.is-waiting { background: var(--warn-soft); }
 
 /* wire panel */
 .wire-list { font-size: 12px; }
+/* A packet log reads best as a plain table of lines: no card edges, no rounded
+   accent stripe per row, just a hairline between entries. Direction is carried
+   by the arrow glyph's colour, which is where the eye already is. */
 .wire-row {
   display: grid;
   grid-template-columns: 58px 20px 118px minmax(0, 1fr) 62px;
   gap: 10px;
   align-items: baseline;
   padding: 5px 8px;
-  border-radius: var(--radius-xs);
-  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
 }
+.wire-row:last-child { border-bottom: 0; }
 .wire-row:hover { background: var(--surface-2); }
-.wire-row.dir-c2s { border-left-color: var(--a-blue); }
-.wire-row.dir-s2c { border-left-color: var(--a-teal); }
 .wire-row.is-err { background: var(--danger-soft); }
 .wire-time { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
 .wire-arrow { font-family: var(--mono); color: var(--text-3); }
+.wire-row.dir-c2s .wire-arrow { color: var(--a-blue); }
+.wire-row.dir-s2c .wire-arrow { color: var(--a-teal); }
 .wire-kind { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--text-2); }
 .wire-summary { color: var(--text); overflow-wrap: anywhere; }
 .wire-bytes { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); text-align: right; }
 .wire-hex {
   grid-column: 1 / -1;
-  margin: 4px 0 6px;
+  margin: 4px 0 2px;
   padding: 7px 9px;
   background: var(--surface-3);
-  border-radius: var(--radius-xs);
   font-family: var(--mono);
   font-size: 10.5px;
   line-height: 1.6;
@@ -2817,3 +2819,142 @@ body::before {
   .version-when, .version-meta { grid-column: 2; }
   .version-actions { grid-column: 2; }
 }
+
+/* ---------------------------------------------------------- command palette */
+/* Built on <dialog>, so focus trapping, the backdrop and Escape come from the
+   platform rather than from a pile of event handlers. */
+.pal {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: min(680px, calc(100vw - 32px));
+  margin-top: 12vh;
+  overflow: visible;
+}
+.pal::backdrop { background: rgba(10, 12, 18, .42); backdrop-filter: blur(3px); }
+.pal-inner {
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+.pal-input {
+  flex: 0 0 auto;
+  height: 52px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+.pal-input:focus { outline: 0; }
+.pal-list { flex: 1 1 auto; overflow-y: auto; padding: 6px; }
+.pal-item {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.pal-item.is-active { background: var(--accent-soft); }
+.pal-kind {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
+  text-transform: lowercase; color: var(--text-3);
+  text-align: right;
+}
+.pal-item.is-active .pal-kind { color: var(--accent); }
+.pal-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pal-title {
+  font-size: 13.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pal-sub { font-size: 11.5px; color: var(--text-3); }
+.pal-detail {
+  font-size: 11.5px; color: var(--text-3);
+  max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pal-empty { padding: 26px; text-align: center; color: var(--text-3); font-size: 13px; }
+.pal-foot {
+  display: flex; gap: 16px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 11px; color: var(--text-3);
+}
+.pal-foot kbd { margin-right: 2px; }
+
+
+/* ------------------------------------------------------- deadlock report */
+/* InnoDB prints its most useful diagnostic as one wall of text, most of which
+   is a hex dump of the locked records. Six lines matter; the rest is pushed
+   back rather than removed, because "rather than removed" is the whole point of
+   showing the raw report at all. */
+.dl-report { font-family: var(--mono); font-size: 11.5px; line-height: 1.65; }
+.dl-line { white-space: pre-wrap; word-break: break-word; }
+
+.dl-heading { font-weight: 700; color: var(--text); letter-spacing: .02em; }
+.dl-rule { color: var(--border-strong); }
+
+.dl-section {
+  margin-top: 10px;
+  font-weight: 700;
+  color: var(--text);
+}
+.dl-section-holds { color: var(--ok); }
+.dl-section-waiting { color: var(--warn); }
+.dl-rollback {
+  margin-top: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dl-trx { color: var(--text); }
+.dl-thread, .dl-meta { color: var(--text-3); }
+.dl-locks { color: var(--text-2); }
+.dl-record { color: var(--text-3); }
+
+/* The hex dump is nine tenths of the report and almost never what you want.
+   Kept legible on hover, out of the way otherwise. */
+.dl-hex { color: var(--text-3); opacity: .5; }
+.dl-report:hover .dl-hex { opacity: .75; }
+
+.dl-sql { color: var(--text); padding: 2px 0; }
+.dl-mode { color: var(--accent); font-weight: 600; }
+.dl-waiting {
+  color: var(--warn); font-weight: 700;
+  padding: 0 4px; border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.dl-ident { color: var(--a-teal); }
+
+/* -------------------------------------------------------- collapsible dock */
+/* Collapsed, the drawer is its tab bar and nothing else, so the timeline gets
+   the whole window. The tabs stay visible: a drawer that vanishes entirely is
+   one you forget exists. */
+.run-split.dock-collapsed { grid-template-rows: minmax(0, 1fr) auto; }
+.run-split.dock-collapsed .dock-panels { display: none; }
+.run-split.dock-collapsed .dock-resize { display: none; }
+.run-split.dock-collapsed .dock-collapse svg { transform: rotate(180deg); }
+
+.dock-collapse {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px;
+  margin-left: 4px;
+  border: 0; border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.dock-collapse:hover { background: var(--surface-3); color: var(--text); }
+.dock-collapse svg { transition: transform .16s; }

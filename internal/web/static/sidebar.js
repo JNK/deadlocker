@@ -178,4 +178,47 @@
   setInterval(function () {
     if (host.querySelector('.run-chip.is-live')) refresh();
   }, 4000);
+
+  // ------------------------------------------------------ scroll position
+  //
+  // Every page is a full navigation, so the sidebar is rebuilt from scratch and
+  // lands back at the top. After scrolling down a long run log to reach an old
+  // run, that throws away exactly the position you just worked for. The offset
+  // is saved on the way out and restored on the way in.
+  //
+  // sessionStorage rather than localStorage: the scroll position is about the
+  // journey through this tab, not a preference to carry into tomorrow.
+  var SCROLL_KEY = 'dl-sidebar-scroll';
+  // #sidebar-history is the element with overflow-y: auto — the sidebar itself
+  // is a flex column that does not scroll.
+  var scroller = host;
+
+  function saveScroll() {
+    try { sessionStorage.setItem(SCROLL_KEY, String(scroller.scrollTop)); } catch (e) {}
+  }
+
+  // Capture on the click that navigates, not on scroll: writing on every scroll
+  // event would be noise, and a click is the only moment the value matters.
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('.sidebar a[href]')) saveScroll();
+  }, true);
+  window.addEventListener('pagehide', saveScroll);
+
+  (function restoreScroll() {
+    var saved;
+    try { saved = sessionStorage.getItem(SCROLL_KEY); } catch (e) { return; }
+    if (!saved) return;
+    var top = Number(saved);
+    if (!top || isNaN(top)) return;
+    // The list is server-rendered, so it is already the right height here. The
+    // rAF is for the case where a stylesheet has not settled yet.
+    scroller.scrollTop = top;
+    requestAnimationFrame(function () {
+      if (scroller.scrollTop !== top) scroller.scrollTop = top;
+    });
+  })();
+
+  // Reconciling can change the list's height, which would otherwise nudge the
+  // reader's position. Nothing to do about that beyond not making it worse:
+  // entries are moved rather than rebuilt, so the scroll offset stays valid.
 })();

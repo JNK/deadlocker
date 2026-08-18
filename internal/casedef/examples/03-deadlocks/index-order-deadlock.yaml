@@ -1,0 +1,109 @@
+name: Two indexes disagree about order, so "always ascending" deadlocks
+category: Deadlocks
+tags: [deadlock, secondary-index, lock-ordering, error-1213]
+description: |
+  "Always take locks in ascending order" is the standard cure for AB-BA. This
+  scenario shows both sessions obeying it and deadlocking anyway.
+
+  Both process the same two orders, both go in ascending order. One walks them
+  by primary key; the other walks them by order code, because that is what its
+  input looked like. The catch is that the two indexes disagree about which row
+  comes first:
+
+      id   code
+      ---  ----
+      1    Z9      <- first by id, second by code
+      2    A1      <- second by id, first by code
+
+  So "ascending" means `1, 2` to one session and `2, 1` to the other, and they
+  meet in the middle. The ordering rule was never wrong — it was underspecified.
+  Ordering only prevents deadlocks if every transaction agrees on the *same*
+  order, and an ordering is only shared if it is over the same column.
+
+  Watch the Locks tab after step 3. Session B reached the row through
+  `idx_code`, so it holds locks in two places: on the secondary index entry and
+  on the clustered index record it points at. It is the clustered index lock —
+  the one nobody wrote — that Session A collides with.
+
+  The fix is to agree on a key: sort by primary key everywhere, even when the
+  input arrives as codes, by resolving codes to ids first and then locking in id
+  order.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE orders (
+      id     INT NOT NULL,
+      code   VARCHAR(16) NOT NULL,
+      status VARCHAR(16) NOT NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY idx_code (code)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO orders (id, code, status) VALUES (1, 'Z9', 'new'), (2, 'A1', 'new')
+
+actors:
+  - id: a
+    name: Ordered by id
+    accent: blue
+  - id: b
+    name: Ordered by code
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: First by code — that is 'A1', which is id 2
+    sql: UPDATE orders SET status = 'billed' WHERE code = 'A1'
+    note: >-
+      Ascending by its own key. Two locks land: one on idx_code at 'A1' and one
+      on PRIMARY at key 2, because the row itself lives in the clustered index.
+    expect: ok
+
+  - actor: a
+    label: First by id — that is id 1
+    sql: UPDATE orders SET status = 'packed' WHERE id = 1
+    note: X,REC_NOT_GAP on PRIMARY at key 1. Ascending by id, as the rule says.
+    expect: ok
+
+  - actor: b
+    label: Second by code — 'Z9', which is id 1
+    sql: UPDATE orders SET status = 'billed' WHERE code = 'Z9'
+    note: >-
+      Blocks on the clustered index record Session A locked by primary key.
+      Still only a wait: A could commit and let B through.
+    expect: blocks
+
+  - actor: a
+    label: Second by id — id 2, closing the cycle
+    sql: UPDATE orders SET status = 'packed' WHERE id = 2
+    note: >-
+      Needs the clustered index lock Session B took by going through idx_code.
+      Nothing in this statement mentions that index. The cycle closes and
+      InnoDB rolls one transaction back with error 1213 — here it is the
+      lighter transaction, the one that has touched fewer index entries.
+    expect: deadlock
+
+  - actor: b
+    label: Commit the survivor
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Clean up the victim
+    sql: ROLLBACK
+    expect: ok

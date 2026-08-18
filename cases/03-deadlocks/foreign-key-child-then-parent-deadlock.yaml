@@ -1,0 +1,136 @@
+name: Inserting the child before updating the parent deadlocks
+category: Deadlocks
+tags: [deadlock, foreign-key, lock-upgrade, shared-lock, error-1213]
+description: |
+  Two sessions run the *same* code, in the same order, against the *same* rows —
+  and deadlock. There is no AB-BA ordering mistake to find here, which is what
+  makes this one worth understanding.
+
+  The natural order is: update the parent, then insert the child. This scenario
+  does it the other way around, which is what application code tends to do when
+  the child row is the thing being created and the parent's counter is a
+  bookkeeping update afterwards:
+
+      INSERT INTO documents (tenant_id, …) VALUES (1, …);
+      UPDATE tenants SET doc_count = doc_count + 1 WHERE id = 1;
+
+  Inserting the child takes a **shared** lock on the parent row, because the
+  foreign key has to prove the parent exists and stays there until commit. Two
+  concurrent inserts both get it — S locks are compatible, so neither waits.
+
+  Then both try to update the parent, which needs an **exclusive** lock on the
+  very row each of them already holds shared. Each has to wait for the other to
+  release its S lock, and neither will before committing. That is a cycle, and
+  InnoDB rolls one of them back with error 1213.
+
+  This is a *lock upgrade* deadlock. It cannot be fixed by ordering, because the
+  order is already identical. The fixes are:
+
+  - Update the parent **first**, taking X up front. Then the second session
+    simply waits instead of deadlocking.
+  - Drop the counter from the parent and derive it, so nothing updates the hot
+    row at all.
+  - Keep the foreign key but move the counter to a separate table, so the
+    insert's S lock and the counter's X lock are not on the same record.
+
+  The same shape appears without a foreign key whenever a transaction does
+  `SELECT … FOR SHARE` and later writes the row it read — see the lock upgrade
+  scenario, which is this one with the S lock written out explicitly instead of
+  taken on your behalf.
+
+  Note what is *not* in the SQL: neither statement mentions a lock, and the
+  INSERT does not mention the tenants table at all.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE tenants (
+      id        INT NOT NULL,
+      name      VARCHAR(64) NOT NULL,
+      doc_count INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+  - |
+    CREATE TABLE documents (
+      id        INT NOT NULL,
+      tenant_id INT NOT NULL,
+      title     VARCHAR(64) NOT NULL,
+      PRIMARY KEY (id),
+      KEY idx_tenant (tenant_id),
+      CONSTRAINT fk_tenant FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO tenants (id, name, doc_count) VALUES (1, 'acme', 0)
+
+actors:
+  - id: a
+    name: Request A
+    accent: blue
+  - id: b
+    name: Request B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Insert a document for tenant 1
+    sql: INSERT INTO documents (id, tenant_id, title) VALUES (101, 1, 'notes')
+    note: >-
+      Takes S,REC_NOT_GAP on tenants PRIMARY at key 1 — the foreign key check.
+      Look at the Locks tab: a lock on a table this statement never names.
+    expect: ok
+
+  - actor: b
+    label: Insert another document for the same tenant
+    sql: INSERT INTO documents (id, tenant_id, title) VALUES (102, 1, 'draft')
+    note: >-
+      Also granted, immediately. Both sessions now hold a shared lock on the
+      same parent record, which is exactly what shared means.
+    expect: ok
+
+  - actor: a
+    label: Bump the parent's counter
+    sql: UPDATE tenants SET doc_count = doc_count + 1 WHERE id = 1
+    note: >-
+      Blocks. This needs X,REC_NOT_GAP on tenant 1, and Session B holds S on it.
+      Session A holds S on it too, but a transaction never conflicts with
+      itself — it is B's lock that is in the way. Still only a wait: if B
+      committed now, A would proceed.
+    expect: blocks
+
+  - actor: b
+    label: Bump the same counter, closing the cycle
+    sql: UPDATE tenants SET doc_count = doc_count + 1 WHERE id = 1
+    note: >-
+      B needs X on the record A holds S on, while A waits for the record B
+      holds S on. The wait-for graph closes and InnoDB rolls one of them back
+      with error 1213. Which one is not something to rely on.
+    expect: deadlock
+
+  - actor: a
+    label: Commit the survivor
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Clean up the victim
+    sql: ROLLBACK
+    note: >-
+      The victim's whole transaction was already rolled back — including its
+      INSERT. That is the part worth remembering: a deadlock takes the document
+      with it, not just the counter update.
+    expect: ok

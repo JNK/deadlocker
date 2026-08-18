@@ -1,0 +1,110 @@
+name: SELECT FOR SHARE then UPDATE deadlocks two identical transactions
+category: Deadlocks
+tags: [deadlock, for-share, for-update, lock-upgrade, error-1213]
+description: |
+  Read-check-write is the most natural transaction shape there is:
+
+      SELECT balance FROM accounts WHERE id = 10 FOR SHARE;   -- is there enough?
+      UPDATE accounts SET balance = balance - 100 WHERE id = 10;
+
+  `FOR SHARE` looks like the careful choice — it is the *weaker* lock, so it
+  must be the safer one. It is the opposite. Two sessions running this at the
+  same time deadlock every time.
+
+  Both `SELECT … FOR SHARE` statements are granted, because S locks are
+  compatible. Both then need to upgrade the same record to X, and each is
+  blocked by the other's S lock. Neither can release before committing, so the
+  cycle is immediate.
+
+  Using `FOR UPDATE` for the read instead makes the problem vanish. The X lock
+  is taken up front, the second session waits at the SELECT, and by the time it
+  runs it sees the committed result of the first. Slower for one session,
+  correct for both — and a wait is always better than a deadlock, because a wait
+  finishes on its own while a deadlock costs you the whole transaction and a
+  retry.
+
+  The rule that falls out: **do not take a shared lock on a row you intend to
+  write.** `FOR SHARE` is for rows you need to stay put while you read something
+  else, not for rows you are about to modify. Compare the foreign key scenario,
+  which is this exact shape with the S lock taken on your behalf by a constraint
+  rather than written out.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id      INT NOT NULL,
+      owner   VARCHAR(64) NOT NULL,
+      balance BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, owner, balance) VALUES (10, 'ada', 5000)
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Read the balance with a shared lock
+    sql: SELECT balance FROM accounts WHERE id = 10 FOR SHARE
+    note: S,REC_NOT_GAP on PRIMARY at key 10.
+    expect: ok
+
+  - actor: b
+    label: Read the same balance the same way
+    sql: SELECT balance FROM accounts WHERE id = 10 FOR SHARE
+    note: >-
+      Granted immediately. The Locks tab now shows two GRANTED S locks on one
+      record. Both sessions have read 5000 and both believe there is enough.
+    expect: ok
+
+  - actor: a
+    label: Deduct from the balance
+    sql: UPDATE accounts SET balance = balance - 100 WHERE id = 10
+    note: >-
+      Blocks. The update needs X on the record Session B holds S on. A's own S
+      lock is not the problem — a transaction never conflicts with itself.
+    expect: blocks
+
+  - actor: b
+    label: Deduct too, closing the cycle
+    sql: UPDATE accounts SET balance = balance - 100 WHERE id = 10
+    note: >-
+      Both sessions now want to upgrade S to X on the same record, each blocked
+      by the other. InnoDB rolls one back with error 1213.
+    expect: deadlock
+
+  - actor: a
+    label: Commit the survivor
+    sql: COMMIT
+    note: The survivor's update went through. One deduction landed, not two.
+    expect: ok
+
+  - actor: b
+    label: Clean up the victim
+    sql: ROLLBACK
+    note: >-
+      Try the whole thing again with FOR UPDATE in place of FOR SHARE: step 4
+      blocks instead, step 6 never deadlocks, and both deductions land.
+    expect: ok

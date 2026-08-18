@@ -636,7 +636,7 @@
 
     if (st.deadlock_report) {
       document.getElementById('deadlock-report').innerHTML =
-        '<pre class="sql">' + esc(st.deadlock_report) + '</pre>';
+        '<div class="dl-report">' + window.DL.highlightDeadlock(st.deadlock_report) + '</div>';
       var dot = document.querySelector('[data-dot="deadlock"]');
       if (dot) dot.hidden = false;
     }
@@ -828,18 +828,38 @@
   document.getElementById('locks-granted').addEventListener('change', renderLocks);
   document.getElementById('docker-deadlock-only').addEventListener('change', renderDockerAll);
 
+  // arrowsNavigate decides whether an arrow key moves between steps or is left
+  // to the browser to scroll with.
+  //
+  // The Step pane shows whichever step is selected, so arrows navigating it is
+  // exactly what you want. The other panes — locks, packets, container log —
+  // are long lists you read by scrolling, and hijacking the arrow keys there
+  // would make them unreadable. j/k always navigate, whichever pane is open.
+  function arrowsNavigate(target) {
+    var dock = document.getElementById('dock');
+    if (!dock || !dock.contains(target)) return true;
+    var active = dock.querySelector('.dock-panel.is-active');
+    return !!active && active.dataset.panel === 'step';
+  }
+
   document.addEventListener('keydown', function (e) {
     if (window.DL.isTypingTarget(e.target)) return;
     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); doStep(); return; }
-    if (e.key === 'ArrowDown' || e.key === 'j') {
-      e.preventDefault();
-      selectStep(Math.min((state.selected || 0) + 1, state.steps.length));
-    }
-    if (e.key === 'ArrowUp' || e.key === 'k') {
-      e.preventDefault();
-      selectStep(Math.max((state.selected || 1) - 1, 1));
-    }
+
+    var next = e.key === 'ArrowDown' || e.key === 'j';
+    var prev = e.key === 'ArrowUp' || e.key === 'k';
+    if (!next && !prev) return;
+    if (e.key.indexOf('Arrow') === 0 && !arrowsNavigate(e.target)) return;
+
+    e.preventDefault();
+    if (next) selectStep(Math.min((state.selected || 0) + 1, state.steps.length));
+    else selectStep(Math.max((state.selected || 1) - 1, 1));
   });
+
+  // The dock is focusable so clicking into the Step pane and then pressing an
+  // arrow key navigates, rather than doing nothing until you click a card.
+  var dockEl = document.getElementById('dock');
+  if (dockEl && !dockEl.hasAttribute('tabindex')) dockEl.setAttribute('tabindex', '-1');
 
   // ------------------------------------------------------- resizable drawer
 
@@ -899,6 +919,59 @@
     });
   }
   setupDockResize();
+
+  // ------------------------------------------------------ collapsible drawer
+  //
+  // The dock is where you read what happened; the lanes are where you watch it
+  // happen. On a laptop you cannot have much of both, so it collapses to its
+  // tab bar and gives the whole window back to the timeline.
+  //
+  // The state is remembered because it is a working preference, not a per-run
+  // decision: someone who wants the lanes full-height wants that every time.
+  function setupDockCollapse() {
+    var dock = document.getElementById('dock');
+    var split = document.querySelector('.run-split');
+    var btn = document.getElementById('dock-collapse');
+    if (!dock || !split || !btn) return;
+
+    var KEY = 'dl-dock-collapsed';
+
+    function paint(collapsed) {
+      split.classList.toggle('dock-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.title = collapsed ? 'Expand the drawer' : 'Collapse the drawer';
+    }
+
+    function set(collapsed) {
+      paint(collapsed);
+      try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e) {}
+    }
+
+    var stored = '0';
+    try { stored = localStorage.getItem(KEY) || '0'; } catch (e) {}
+    paint(stored === '1');
+
+    btn.addEventListener('click', function () {
+      set(!split.classList.contains('dock-collapsed'));
+    });
+
+    // Clicking a tab while collapsed means "show me that", not "switch a pane I
+    // cannot see".
+    document.querySelectorAll('.dock-tab').forEach(function (t) {
+      t.addEventListener('click', function () {
+        if (split.classList.contains('dock-collapsed')) set(false);
+      });
+    });
+
+    // Selecting a step is a request to read its result, so the drawer comes
+    // back for that too.
+    document.querySelectorAll('[data-step-card]').forEach(function (card) {
+      card.addEventListener('click', function () {
+        if (split.classList.contains('dock-collapsed')) set(false);
+      });
+    });
+  }
+  setupDockCollapse();
 
   // ------------------------------------------------------------- start up
 

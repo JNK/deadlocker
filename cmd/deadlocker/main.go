@@ -30,9 +30,38 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		log.Fatalf("deadlocker: %v", err)
+	// Subcommands are dispatched before flag.Parse so `run` can have its own
+	// flag set; with no subcommand the tool serves the UI, which is what it is
+	// for most of the time.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "run":
+			fail(runCLI(os.Args[2:]))
+			return
+		case "help", "-h", "--help":
+			fmt.Print(cliUsage)
+			fmt.Println("\nServer flags:")
+			flag.CommandLine.SetOutput(os.Stdout)
+			flag.PrintDefaults()
+			return
+		}
 	}
+	fail(run())
+}
+
+// fail reports an error and exits, honouring an explicit exit code when one was
+// asked for. A scenario disagreeing with reality is a result, not a crash, so it
+// gets a plain message rather than a log line with a prefix.
+func fail(err error) {
+	if err == nil {
+		return
+	}
+	var exit *exitError
+	if errors.As(err, &exit) {
+		fmt.Fprintln(os.Stderr, exit.msg)
+		os.Exit(exit.code)
+	}
+	log.Fatalf("deadlocker: %v", err)
 }
 
 func run() error {

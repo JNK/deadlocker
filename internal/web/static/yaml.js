@@ -517,6 +517,9 @@
   window.DL.highlightYAML = highlightYAML;
   window.DL.attachEditor = attachEditor;
   window.DL.highlightYAMLViews = highlightViews;
+  // The deadlock report contains the offending statements, and they should read
+  // the same there as they do in a scenario's source.
+  window.DL.highlightSQL = highlightSQL;
   // Exposed so the completion rules can be exercised without a browser.
   window.DL.yamlCompletions = completionsFor;
 

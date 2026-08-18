@@ -1,0 +1,156 @@
+name: Table locks, and the intention locks you never asked for
+category: Fundamentals
+tags: [table-lock, intention-lock, lock-tables, lock-compatibility]
+description: |
+  Every row lock is announced at the table level first. Before InnoDB takes an X
+  lock on a record it takes an **IX** (intention exclusive) lock on the table;
+  before an S row lock it takes **IS**. They exist so that a session wanting to
+  lock the *whole* table can find out in one check whether anyone is holding row
+  locks, instead of scanning every record.
+
+  So the Locks tab has two kinds of row in it. Filter by `LOCK_TYPE` in your
+  head: `TABLE` rows are these intention locks, `RECORD` rows are the actual
+  ones. Every scenario in this library has been showing you table locks all
+  along; this is the one that points at them.
+
+  Intention locks are compatible with each other — that is the entire point,
+  since otherwise no two sessions could ever hold row locks at the same time.
+  The compatibility matrix that matters:
+
+  |     | IS  | IX  | S   | X   |
+  |-----|-----|-----|-----|-----|
+  | IS  | yes | yes | yes | no  |
+  | IX  | yes | yes | no  | no  |
+  | S   | yes | no  | yes | no  |
+  | X   | no  | no  | no  | no  |
+
+  A full-table `S` or `X` lock is what `LOCK TABLES` takes, and it is what
+  collides. Session B's `LOCK TABLES … WRITE` wants table-level X and waits on
+  the intention locks the other two sessions hold — even though between them
+  they have locked two rows out of three.
+
+  That is the practical lesson: a table lock is not "a bit stronger than a row
+  lock", it is a completely different unit of contention. One open transaction
+  holding one row is enough to stall it.
+
+  One setup detail that is easy to get wrong. InnoDB only takes its own table
+  lock for `LOCK TABLES` when `autocommit` is off — otherwise the statement is
+  enforced purely by the server's metadata locks and no `TABLE` row appears in
+  `data_locks` at all. This scenario sets `autocommit = 0` for that reason, so
+  the lock you are being shown is the real InnoDB one rather than an MDL wearing
+  its name. `LOCK TABLES` takes a metadata lock as well either way, which is the
+  other half of the story — see the metadata lock scenario.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+  vars:
+    # Without this, LOCK TABLES is enforced by metadata locks alone and InnoDB
+    # never takes the table-level lock this scenario is about.
+    autocommit: "0"
+
+schema:
+  - |
+    CREATE TABLE inventory (
+      id    INT NOT NULL,
+      sku   VARCHAR(32) NOT NULL,
+      count INT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO inventory (id, sku, count) VALUES (1, 'widget', 10), (2, 'gadget', 4), (3, 'sprocket', 7)
+
+actors:
+  - id: a
+    name: Row writer
+    accent: blue
+  - id: b
+    name: Table locker
+    accent: rose
+  - id: c
+    name: Row reader
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Update one row
+    sql: UPDATE inventory SET count = count - 1 WHERE id = 1
+    note: >-
+      Two locks appear, not one: IX on the table `inventory`, and
+      X,REC_NOT_GAP on PRIMARY at key 1. The table lock is the announcement;
+      the record lock is the thing.
+    expect: ok
+
+  - actor: c
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: c
+    label: Read a different row with a shared lock
+    sql: SELECT * FROM inventory WHERE id = 3 FOR SHARE
+    note: >-
+      Granted. This takes IS on the table, which is compatible with Session A's
+      IX — intention locks never conflict with each other, whatever rows they
+      cover.
+    expect: ok
+
+  - actor: b
+    label: Try to lock the whole table for writing
+    sql: LOCK TABLES inventory WRITE
+    note: >-
+      Blocks. Table-level X is incompatible with both IX and IS, and two
+      sessions are holding those. Session B wants a lock on rows 1, 2 and 3;
+      it cannot have it while one row is spoken for.
+    expect: blocks
+
+  - actor: a
+    label: Commit the row writer
+    sql: COMMIT
+    note: A's IX goes away, but Session C's IS is still there, so B still waits.
+    expect: ok
+
+  - actor: c
+    label: Commit the reader too
+    sql: COMMIT
+    note: The last intention lock is gone and Session B's table lock is granted.
+    expect: ok
+
+  - actor: b
+    label: Release the table
+    sql: UNLOCK TABLES
+    note: >-
+      LOCK TABLES is not part of a transaction and is not released by COMMIT —
+      it needs UNLOCK TABLES, or the session ending. Forgetting this is a
+      classic way to wedge a server.
+    expect: ok
+
+  - actor: c
+    label: Take a table read lock instead
+    sql: LOCK TABLES inventory READ
+    note: >-
+      The other half of the matrix: table-level S. Granted, because nothing is
+      holding IX or X any more.
+    expect: ok
+
+  - actor: a
+    label: Try to update a row while the table is read-locked
+    sql: UPDATE inventory SET count = count - 1 WHERE id = 2
+    note: >-
+      Blocks. The update needs IX, which is incompatible with Session C's
+      table-level S. A single reader holding a table lock stops every writer,
+      which is why LOCK TABLES has no place in an application.
+    expect: blocks
+
+  - actor: c
+    label: Release the read lock
+    sql: UNLOCK TABLES
+    note: Session A's update is granted at once.
+    expect: ok

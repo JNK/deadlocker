@@ -120,6 +120,10 @@
           <button class="dock-tab" data-tab="activity" type="button">Activity</button>
           <div class="dock-tabs-spacer"></div>
           <span class="conn-state" id="conn-state" title="Live event stream">connecting…</span>
+          <button class="dock-collapse" id="dock-collapse" type="button"
+                  aria-expanded="true" title="Collapse the drawer">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
         </div>
 
         <div class="dock-panels">
@@ -194,9 +198,11 @@
 </script>
 <script src="/static/app.js"></script>
 <script src="/static/dialog.js"></script>
+<script src="/static/palette.js"></script>
 <script src="/static/activity.js"></script>
 <script src="/static/sidebar.js"></script>
 <script src="/static/yaml.js"></script>
+<script src="/static/deadlock.js"></script>
 <script src="/static/runpane.js"></script>
 <script src="/static/run.js"></script>
 {{template "assistant-mount" .}}

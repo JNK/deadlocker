@@ -1,0 +1,111 @@
+name: NOWAIT and SKIP LOCKED — the two ways to refuse to wait
+category: Fundamentals
+tags: [for-update, nowait, skip-locked, queue, error-3572]
+description: |
+  A locking read waits by default, for up to `innodb_lock_wait_timeout`. MySQL 8
+  adds two ways to say you would rather not.
+
+  **`FOR UPDATE NOWAIT`** fails immediately with error 3572 rather than waiting.
+  It turns an invisible latency problem into a visible error, which is usually
+  what you want in a request path: a handler that would have blocked for fifty
+  seconds is better off returning "busy, try again" in five milliseconds.
+
+  **`FOR UPDATE SKIP LOCKED`** returns the rows it *could* lock and silently
+  omits the rest. That makes it non-deterministic — the same query returns
+  different rows depending on who else is running — which is a bug everywhere
+  except in one place, where it is exactly right: a work queue. Several workers
+  each `SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED` and each gets a different job,
+  with no coordination, no queue table lock, and no thundering herd.
+
+  Both are per-statement, not per-transaction, and neither changes what a lock
+  *is* — only what happens when one is already held.
+
+  Two things worth watching in the Locks tab. In step 4, `NOWAIT` leaves no
+  waiting lock behind, unlike every other blocked statement in this library — it
+  does not queue, it gives up. In step 5, `SKIP LOCKED` takes a real lock on
+  job 2, held until commit, while job 1 stays untouched.
+
+  Note also what error 3572 rolls back: the statement, not the transaction.
+  Session B keeps its transaction and carries straight on to step 5. Contrast
+  the deadlock scenarios, where errno 1213 takes the whole transaction with it.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE jobs (
+      id      INT NOT NULL,
+      payload VARCHAR(64) NOT NULL,
+      state   VARCHAR(16) NOT NULL DEFAULT 'ready',
+      PRIMARY KEY (id),
+      KEY idx_state (state, id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO jobs (id, payload) VALUES (1, 'resize-image'), (2, 'send-email'), (3, 'rebuild-index')
+
+actors:
+  - id: a
+    name: Worker one
+    accent: blue
+  - id: b
+    name: Worker two
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Claim job 1
+    sql: SELECT * FROM jobs WHERE id = 1 FOR UPDATE
+    note: >-
+      A primary key lookup, so exactly one record lock: X,REC_NOT_GAP on
+      PRIMARY at key 1. Jobs 2 and 3 are untouched.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Try to claim the same job with NOWAIT
+    sql: SELECT * FROM jobs WHERE id = 1 FOR UPDATE NOWAIT
+    note: >-
+      Fails at once with error 3572, "Statement aborted because lock(s) could
+      not be acquired immediately and NOWAIT is set". No waiting lock is
+      created. The statement is rolled back; the transaction is not.
+    expect: error
+
+  - actor: b
+    label: Take the next free job with SKIP LOCKED
+    sql: SELECT * FROM jobs WHERE state = 'ready' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
+    note: >-
+      Returns job 2, not job 1. The row Session A holds is skipped rather than
+      waited for, and job 2 is locked exclusively. Two workers, two different
+      jobs, no coordination.
+    expect: ok
+
+  - actor: b
+    label: Mark it running
+    sql: UPDATE jobs SET state = 'running' WHERE id = 2
+    expect: ok
+
+  - actor: a
+    label: Commit worker one
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit worker two
+    sql: COMMIT
+    note: >-
+      With nothing locked any more, step 4's NOWAIT read would now succeed —
+      it only errors when it would actually have waited.
+    expect: ok
