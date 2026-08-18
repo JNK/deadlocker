@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Installs deadlocker into the current user's home directory.
+
+  enable_currentUserHome is what makes this a per-user install: the payload root
+  maps onto ~, so ".local/bin/deadlocker" in the payload lands in
+  ~/.local/bin and no administrator password is needed. The system and
+  "anywhere" domains stay off, so the installer cannot be pointed at
+  /usr/local or another volume, which keeps a single install location that
+  matches `make install`.
+
+  customize="allow" keeps this a one-click install: the installer opens on the
+  summary and the choice pane sits behind the Customize button. Switch to
+  "always" to open on the choices instead, which is what you want once there is
+  more than one thing in here to pick from.
+
+  This is a template. scripts/pkg.sh expands the two placeholder lines below
+  from its TOOLS array, which is the single source of truth for what ships — do
+  not hand-edit a tool list in here. Only a placeholder alone on its own line is
+  expanded, so prose may name it without being rewritten.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>Deadlocker</title>
+    <organization>io.jnk</organization>
+    <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <welcome file="welcome.html"/>
+    <conclusion file="conclusion.html"/>
+    <choices-outline>
+@OUTLINE@
+    </choices-outline>
+@CHOICES@
+</installer-gui-script>

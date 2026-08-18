@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, sans-serif; font-size: 12px;">
+
+<p><code>deadlocker</code> was installed to <code>~/.local/bin</code>.</p>
+
+<p><b>1. Make sure <code>~/.local/bin</code> is on your PATH</b><br>
+If the command is not found in a new terminal, add it:</p>
+
+<pre>zsh:   echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.zshrc
+bash:  echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bash_profile
+fish:  fish_add_path $HOME/.local/bin</pre>
+
+<p><b>2. Start Docker</b><br>
+Deadlocker runs real MySQL servers in containers it manages itself, so a Docker
+daemon has to be running.</p>
+
+<p><b>3. Run it</b></p>
+
+<pre>deadlocker</pre>
+
+<p>That serves the interface on <code>http://127.0.0.1:8899</code> and creates a
+<code>cases/</code> directory beside wherever you started it. The library page
+offers to import the worked examples — gap locks, deadlocks, metadata locks,
+one per behaviour — the first time it is empty.</p>
+
+<p><b>Without the interface</b><br>
+Scenarios can be run from the command line, which exits non-zero when one stops
+behaving as it claims:</p>
+
+<pre>deadlocker run                              # every scenario
+deadlocker run classic-ab-ba-deadlock       # one of them
+deadlocker run -format junit -o results.xml # for CI</pre>
+
+<p>An MCP endpoint is served at <code>/mcp</code> for agent clients, and an
+optional assistant can be pointed at any OpenAI-compatible endpoint from the
+Settings page. Neither is required.</p>
+
+</body>
+</html>

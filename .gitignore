@@ -1,5 +1,8 @@
-# Built binary
+# Built binaries and the packaged installer. dist/ is deliberately not in the
+# repository: a 15MB .pkg has no business in git history, so a built installer
+# becomes downloadable by being attached to a GitHub release instead.
 /deadlocker
+/bin/
 /dist/
 *.test
 

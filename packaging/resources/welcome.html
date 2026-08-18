@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, sans-serif; font-size: 12px;">
+
+<p><b>Deadlocker</b> is a MySQL lock playground. It starts its own MySQL
+container, runs a scenario one statement at a time across several connections,
+and shows you which locks each statement took and who is blocking whom.</p>
+
+<p>It installs a single command into <code>~/.local/bin</code>. No administrator
+password is needed, and nothing is written outside your home directory.</p>
+
+<p><b>It needs Docker.</b> Deadlocker starts and stops its own MySQL containers,
+so Docker Desktop (or another Docker daemon) has to be running before you use
+it. Nothing else is required — the web interface, the scenario library and the
+MySQL wire-protocol decoder are all inside the one binary.</p>
+
+</body>
+</html>
