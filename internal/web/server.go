@@ -148,6 +148,10 @@ func templateFuncs() template.FuncMap {
 			_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(tag))))
 			return int(h.Sum32()%8) + 1
 		},
+		// Outcomes are slugs so they can be class names; this is how they read.
+		"outcomeLabel": func(s string) string {
+			return strings.ReplaceAll(s, "-", " ")
+		},
 		"markdown": func(s string) template.HTML {
 			return markdown.Render(s)
 		},
@@ -227,6 +231,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/chat", s.handleChatNew)
 	mux.HandleFunc("GET /api/chat/{id}", s.handleChatSession)
 	mux.HandleFunc("POST /api/chat/{id}/send", s.handleChatSend)
+	mux.HandleFunc("POST /api/chat/{id}/discard", s.handleChatDiscard)
 	mux.HandleFunc("POST /api/chat/{id}/draft", s.handleChatDraft)
 	mux.HandleFunc("POST /api/chat/{id}/save", s.handleChatSaveDraft)
 
@@ -291,11 +296,14 @@ type pageData struct {
 	Run      *engine.RunState
 	// Archived marks a run that has finished and been closed: it is rendered
 	// from its history record, with no live stream and no controls.
-	Archived      bool
-	ArchivedLocks *engine.LockSnapshot
-	Steps         []*engine.StepResult
-	CaseSteps     []casedef.Step
-	Settle        int64
+	Archived bool
+	// ArchivedOutcome is the recorded one-word verdict. The page shows it so it
+	// cannot disagree with what the sidebar says about the same run.
+	ArchivedOutcome string
+	ArchivedLocks   *engine.LockSnapshot
+	Steps           []*engine.StepResult
+	CaseSteps       []casedef.Step
+	Settle          int64
 
 	Analyses   []*agentapi.Job
 	Job        *agentapi.Job
@@ -910,6 +918,7 @@ func (s *Server) renderArchivedRun(w http.ResponseWriter, rec *engine.Record) {
 	pd.Run = &st
 	pd.Steps = rec.Steps
 	pd.Archived = true
+	pd.ArchivedOutcome = rec.Outcome
 	pd.ArchivedLocks = rec.FinalLocks
 	pd.Settle = s.mgr.SettleWindow().Milliseconds()
 	pd.History = s.mgr.History().ForCase(rec.CaseID)

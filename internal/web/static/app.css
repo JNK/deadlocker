@@ -1183,6 +1183,9 @@ table.data tr.is-waiting { background: var(--warn-soft); }
 .outcome-timeout { background: var(--warn-soft); color: var(--warn); }
 .outcome-mismatch { background: var(--danger-soft); color: var(--danger); }
 .outcome-error { background: var(--danger-soft); color: var(--danger); }
+/* A run that was opened and closed without submitting anything. Neutral: it is
+   not a failure, it just has nothing to report. */
+.outcome-not-started { background: var(--surface-3); color: var(--text-3); }
 
 /* ============================================================ compare / diff */
 

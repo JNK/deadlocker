@@ -95,5 +95,39 @@ check('the sticky header is frosted, not opaque', () => {
     'needs an opaque fallback where backdrop-filter is unsupported');
 });
 
+// Outcomes double as CSS class names, so a value with a space in it silently
+// becomes two classes and loses its styling entirely. This caught
+// "outcome-not started", which rendered unstyled in the sidebar while the run
+// page said something different about the same run.
+check('every run outcome is a single-token class with a rule', () => {
+  const goPath = path.join(__dirname, '..', 'internal/engine/history.go');
+  const go = fs.readFileSync(goPath, 'utf8');
+  const body = /func outcomeOf\(r \*Record\) string \{([\s\S]*?)\n\}/.exec(go);
+  assert.ok(body, 'could not find outcomeOf');
+
+  const values = [...body[1].matchAll(/return "([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(values.length >= 5, 'expected several outcomes, found ' + values.length);
+
+  for (const v of values) {
+    assert.ok(!/\s/.test(v),
+      'outcome ' + JSON.stringify(v) + ' contains whitespace; as a class name ' +
+      'that becomes two classes and matches neither');
+    assert.ok(css.includes('.outcome-' + v),
+      'no .outcome-' + v + ' rule for the outcome ' + JSON.stringify(v));
+  }
+});
+
+// And the slug must never be shown raw: it is rendered through outcomeLabel in
+// templates and a hyphen swap in JS.
+check('outcomes are labelled, not printed as slugs', () => {
+  const raw = [...html.matchAll(/outcome outcome-\{\{([^}]+)\}\}">\{\{([^}]+)\}\}/g)];
+  assert.ok(raw.length > 0, 'expected some outcome badges in the templates');
+  for (const m of raw) {
+    assert.match(m[2], /^outcomeLabel /,
+      'outcome ' + m[1].trim() + ' is printed raw; use {{outcomeLabel …}} so ' +
+      '"not-started" reads as "not started"');
+  }
+});
+
 console.log(failures ? '\n' + failures + ' failure(s)' : '\nall css checks passed');
 process.exit(failures ? 1 : 0);

@@ -179,6 +179,15 @@ func (s *Service) Session(id string) (*Session, bool) {
 	return sess, ok
 }
 
+// Discard forgets a session. Closing the builder ends the conversation, so the
+// server should not keep offering to resume something the user has walked away
+// from.
+func (s *Service) Discard(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, id)
+}
+
 // Draft returns the session's current scenario draft.
 func (sess *Session) DraftYAML() string {
 	sess.mu.Lock()

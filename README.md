@@ -403,7 +403,11 @@ a "Processing" bubble with its own timer, and anything you type meanwhile is
 queued and sent when the turn ends.
 
 Both drive `internal/agentapi`, the same layer behind MCP, so the two can never
-drift apart.
+drift apart. They differ deliberately in how long they last. The **builder** is
+a modal task: closing it ends the conversation, and opening it again is a blank
+page. The **bubble** is a running conversation about whatever is on screen, so
+putting it away keeps everything and it comes back as it was — on this page and
+the next one.
 
 Configuration is stored in bbolt and versioned. Every save appends a revision;
 restoring copies an old one forward rather than rewriting history, so a base URL

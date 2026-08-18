@@ -130,7 +130,7 @@
                   <tr>
                     <td><input type="checkbox" class="run-pick" value="{{.RunID}}"></td>
                     <td class="mono">{{dateTime .StartedAt}}</td>
-                    <td><span class="outcome outcome-{{.Outcome}}">{{.Outcome}}</span></td>
+                    <td><span class="outcome outcome-{{.Outcome}}">{{outcomeLabel .Outcome}}</span></td>
                     <td class="mono">{{.Submitted}}/{{len .Steps}}</td>
                     <td class="mono">{{.Blocked}}</td>
                     <td class="mono">{{.Deadlocks}}</td>

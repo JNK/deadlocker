@@ -43,7 +43,7 @@
               <strong>{{dateTime .Diff.A.StartedAt}}</strong>
               <div class="muted mono">{{.Diff.A.RunID}} · {{.Diff.A.Image}} · {{if .Diff.A.Isolation}}{{.Diff.A.Isolation}}{{else}}default isolation{{end}}</div>
             </div>
-            <span class="outcome outcome-{{.Diff.A.Outcome}}">{{.Diff.A.Outcome}}</span>
+            <span class="outcome outcome-{{.Diff.A.Outcome}}">{{outcomeLabel .Diff.A.Outcome}}</span>
           </div>
           <div class="compare-head side-b">
             <span class="side-tag">B</span>
@@ -51,7 +51,7 @@
               <strong>{{dateTime .Diff.B.StartedAt}}</strong>
               <div class="muted mono">{{.Diff.B.RunID}} · {{.Diff.B.Image}} · {{if .Diff.B.Isolation}}{{.Diff.B.Isolation}}{{else}}default isolation{{end}}</div>
             </div>
-            <span class="outcome outcome-{{.Diff.B.Outcome}}">{{.Diff.B.Outcome}}</span>
+            <span class="outcome outcome-{{.Diff.B.Outcome}}">{{outcomeLabel .Diff.B.Outcome}}</span>
           </div>
         </div>
 
@@ -135,7 +135,7 @@
                 <td><input type="checkbox" class="run-pick" value="{{.RunID}}"></td>
                 <td class="mono">{{dateTime .StartedAt}}</td>
                 <td>{{.CaseName}}</td>
-                <td><span class="outcome outcome-{{.Outcome}}">{{.Outcome}}</span></td>
+                <td><span class="outcome outcome-{{.Outcome}}">{{outcomeLabel .Outcome}}</span></td>
                 <td class="mono">{{if .Isolation}}{{.Isolation}}{{else}}—{{end}}</td>
                 <td class="mono">{{.Submitted}}/{{len .Steps}}</td>
                 <td class="mono">{{.Blocked}}</td>

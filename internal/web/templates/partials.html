@@ -60,7 +60,7 @@
         <span class="run-chip-meta">
           <span class="mono">{{.Cursor}}/{{.Total}}</span>
           {{if .Live}}<span class="run-chip-live">live</span>
-          {{else if .Outcome}}<span class="outcome outcome-{{.Outcome}}">{{.Outcome}}</span>{{end}}
+          {{else if .Outcome}}<span class="outcome outcome-{{.Outcome}}">{{outcomeLabel .Outcome}}</span>{{end}}
           <span class="run-chip-time">{{clock .StartedAt}}</span>
         </span>
       </span>

@@ -59,6 +59,14 @@
     }
   };
 
+  // hasContent reports whether anything has been said. The empty-state element
+  // lives inside the log, so it does not count.
+  Log.prototype.hasContent = function () {
+    var n = this.el.children.length;
+    if (this.empty && this.empty.parentNode === this.el) n--;
+    return n > 0;
+  };
+
   // A tool call or reasoning block ends the current prose block, so the next
   // text starts its own bubble.
   Log.prototype.breakText = function () { this.textBlock = null; };
@@ -481,14 +489,29 @@
   }
 
   // openSession resumes where the conversation left off, or starts a new one.
-  function openSession(mode, scenarioID, runID) {
-    return resumeSession(mode, scenarioID).then(function (existing) {
+  //
+  // resume: false forces a new session, for a surface where reopening means
+  // starting over rather than picking up.
+  function openSession(mode, scenarioID, runID, resume) {
+    var find = resume === false
+      ? Promise.resolve(null)
+      : resumeSession(mode, scenarioID);
+    return find.then(function (existing) {
       if (existing) { existing.resumed = true; return existing; }
+      forgetSession(mode, scenarioID);
       return createSession(mode, scenarioID, runID).then(function (res) {
         if (res && res.ok) rememberSession(mode, scenarioID, res.session);
         return res;
       });
     });
+  }
+
+  // discardSession ends a conversation on both sides, so nothing is left to
+  // resume by accident.
+  function discardSession(mode, scenarioID, id) {
+    forgetSession(mode, scenarioID);
+    if (!id) return Promise.resolve();
+    return fetch('/api/chat/' + id + '/discard', { method: 'POST' }).catch(function () {});
   }
 
   // replay redraws a stored transcript. Tool activity is not kept, so the
@@ -627,6 +650,7 @@
     createSession: createSession,
     openSession: openSession,
     forgetSession: forgetSession,
+    discardSession: discardSession,
     replay: replay,
     status: chatStatus,
     wireSuggestions: wireSuggestions,

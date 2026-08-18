@@ -30,7 +30,12 @@
   function chipHTML(e) {
     var meta = '<span class="mono">' + e.cursor + '/' + e.total + '</span>';
     if (e.live) meta += '<span class="run-chip-live">live</span>';
-    else if (e.outcome) meta += '<span class="outcome outcome-' + esc(e.outcome) + '">' + esc(e.outcome) + '</span>';
+    // The outcome is a slug so it can be a class name; the label is the same
+    // thing with the hyphen read as a space.
+    else if (e.outcome) {
+      meta += '<span class="outcome outcome-' + esc(e.outcome) + '">' +
+        esc(e.outcome.replace(/-/g, ' ')) + '</span>';
+    }
     meta += '<span class="run-chip-time">' + esc(clockOf(e.started_at)) + '</span>';
 
     return '<span class="dot status-' + esc(e.status) + '"></span>' +

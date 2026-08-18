@@ -82,20 +82,19 @@
         }
       });
 
-      C.openSession('build', st.scenarioID, '').then(function (res) {
+      // The builder always starts fresh. Closing it is a decision to stop, so
+      // reopening should be a blank page rather than a conversation you already
+      // walked away from — which is misleading when you closed it having done
+      // nothing at all. The page-level chat bubble is the opposite: it is a
+      // running conversation about what is on screen, and it does resume.
+      C.openSession('build', st.scenarioID, '', false).then(function (res) {
         if (!res || !res.ok) { el.log.note('error', (res && res.error) || 'could not start a session'); return; }
         st.session = res.session;
         if (res.draft) {
           setDraftValue(res.draft);
-          st.savedDraft = res.resumed ? st.savedDraft : res.draft;
+          st.savedDraft = res.draft;
           st.pane.setScenario(res.scenario);
-          paint(res.resumed ? isDraftDirty() : false);
-        }
-        if (res.resumed) {
-          C.replay(el.log, res.transcript);
-          el.log.note('info', 'Picked up where you left off.');
-          // A run started before the reload is still there; show it again.
-          if (res.run_id) st.pane.attach(res.run_id);
+          paint(false);
         }
       });
 
@@ -121,12 +120,18 @@
 
     // closeQuestion returns what to ask before closing, or null when there is
     // nothing at stake.
+    //
+    // Closing always ends the session, so the question is about what that
+    // costs. With an untouched builder it costs nothing and there is no
+    // question — being asked to confirm discarding nothing is its own kind of
+    // wrong.
     function closeQuestion() {
       if (el.composer && el.composer.isBusy()) {
         return {
           title: 'The assistant is still replying',
-          body: 'Closing now discards the reply in progress.',
-          confirm: 'Close anyway',
+          body: 'Closing discards the reply in progress and ends this conversation. ' +
+            'Opening the builder again starts from scratch.',
+          confirm: 'Discard and exit',
           cancel: 'Keep waiting',
           danger: true
         };
@@ -134,17 +139,41 @@
       if (isDraftDirty()) {
         return {
           title: 'This draft has not been saved',
-          body: 'It only exists in this conversation. Closing loses it.',
-          confirm: 'Discard the draft',
+          body: 'It only exists in this conversation, which ends when you close the ' +
+            'builder. Opening it again starts from scratch. Save it to the library first ' +
+            'if you want to keep it.',
+          confirm: 'Discard and exit',
           cancel: 'Keep editing',
+          danger: true
+        };
+      }
+      if (hasConversation()) {
+        return {
+          title: 'End this conversation?',
+          body: 'The builder starts from scratch next time it is opened.',
+          confirm: 'Discard and exit',
+          cancel: 'Keep it open',
           danger: true
         };
       }
       return null;
     }
 
+    // hasConversation reports whether anything has actually been said, so an
+    // untouched builder closes without ceremony.
+    function hasConversation() {
+      return !!(el.log && el.log.hasContent && el.log.hasContent());
+    }
+
     function finishClose() {
       if (st.turn) { st.turn.abort(); st.turn = null; }
+      // End the session on both sides. Without this the next open resumes a
+      // conversation the user has already dismissed.
+      C.discardSession('build', st.scenarioID, st.session);
+      st.session = null;
+      st.savedDraft = '';
+      setDraftValue('');
+      el.log.clear();
       st.pane.detach();
       el.sheet.hidden = true;
       el.backdrop.hidden = true;
@@ -340,6 +369,11 @@
       setTimeout(function () { el.input.focus(); }, 30);
     }
 
+    // Closing the bubble only puts it away. Unlike the builder, this is a
+    // running conversation about whatever is on screen, so nothing is torn
+    // down: the log stays in the DOM and the session id stays in
+    // sessionStorage, and it comes back as it was — on this page and on the
+    // next one.
     function hide() {
       el.panel.hidden = true;
       el.launcher.hidden = false;
@@ -356,7 +390,10 @@
       C.openSession('discuss', st.scenarioID, st.runID).then(function (res) {
         if (!res || !res.ok) { el.log.note('error', (res && res.error) || 'could not start a session'); return; }
         st.session = res.session;
-        if (res.resumed) C.replay(el.log, res.transcript);
+        if (res.resumed && (res.transcript || []).length) {
+          C.replay(el.log, res.transcript);
+          el.log.note('info', 'Picked up where you left off.');
+        }
       });
     }
 

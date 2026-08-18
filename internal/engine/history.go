@@ -66,7 +66,10 @@ func outcomeOf(r *Record) string {
 	case r.Errors > 0:
 		return "error"
 	case r.Submitted == 0:
-		return "not started"
+		// Hyphenated, not spaced: this value is used as a CSS class as well as
+		// a label, and "outcome-not started" is two classes, neither of which
+		// exists.
+		return "not-started"
 	default:
 		return "clean"
 	}

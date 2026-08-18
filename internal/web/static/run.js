@@ -605,7 +605,7 @@
       renderLocks();
     }
     document.querySelector('[data-lanes-end]').textContent =
-      'This run has finished and its database was dropped. Showing the recorded result.';
+      'This run is closed and its scratch database was dropped. Showing the recorded result.';
     connState.textContent = 'finished';
   }
 
@@ -988,7 +988,7 @@
       renderLocks();
     }
     document.querySelector('[data-lanes-end]').textContent =
-      'This run has finished and its database was dropped. Showing the recorded result.';
+      'This run is closed and its scratch database was dropped. Showing the recorded result.';
   } else {
     connect();
   }

@@ -22,7 +22,15 @@
 
       <div class="run-controls">
         {{if .Archived}}
-        <span class="chip chip-warn">finished · recorded result</span>
+        <!-- The recorded outcome comes first and uses the same vocabulary the
+             sidebar does, so the two cannot appear to disagree about the same
+             run. The chip beside it describes the page, not the run: it is
+             rendered from history because the scratch database is gone. -->
+        {{if .ArchivedOutcome}}
+        <span class="outcome outcome-{{.ArchivedOutcome}}"
+              title="The recorded outcome of this run">{{outcomeLabel .ArchivedOutcome}}</span>
+        {{end}}
+        <span class="chip chip-warn" title="The scratch database was dropped when the run closed">closed · recorded result</span>
         {{end}}
         <div class="progress" title="Steps submitted">
           <span data-cursor>{{.Run.Cursor}}</span><span class="progress-sep">/</span><span>{{.Run.Total}}</span>

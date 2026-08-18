@@ -476,6 +476,13 @@ func (s *Server) handleChatSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleChatDiscard ends a session. Closing the builder is a decision to walk
+// away, so the conversation should not be waiting when it is next opened.
+func (s *Server) handleChatDiscard(w http.ResponseWriter, r *http.Request) {
+	s.chat.Discard(r.PathValue("id"))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // handleChatDraft lets the human edit the draft the assistant is working on,
 // keeping both sides on the same document.
 func (s *Server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
