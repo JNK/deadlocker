@@ -1,6 +1,10 @@
 name: NOWAIT and SKIP LOCKED — the two ways to refuse to wait
 category: Fundamentals
 tags: [for-update, nowait, skip-locked, queue, error-3572]
+docs:
+  - title: Locking reads — NOWAIT and SKIP LOCKED
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html
+
 description: |
   A locking read waits by default, for up to `innodb_lock_wait_timeout`. MySQL 8
   adds two ways to say you would rather not.

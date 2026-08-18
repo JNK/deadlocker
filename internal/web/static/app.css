@@ -3020,8 +3020,10 @@ body::before {
 /* The row holds the link and a delete button side by side. A button nested
    inside an anchor is neither valid nor well-behaved, so the anchor fills the
    row and the button overlays its right edge. */
-.run-row { position: relative; }
-.run-row .run-chip { padding-right: 26px; }
+/* A flex row rather than an absolutely positioned overlay: the checkbox takes
+   real space when it appears, so it cannot end up floating beside the list. */
+.run-row { position: relative; display: flex; align-items: stretch; }
+.run-row .run-chip { flex: 1 1 auto; min-width: 0; padding-right: 26px; }
 
 .run-forget {
   position: absolute;
@@ -3127,17 +3129,17 @@ body::before {
 /* ------------------------------------------------------ compare selection */
 /* The checkbox only exists while picking, and takes its space from the row
    rather than overlaying it, so nothing shifts under the pointer twice. */
-.run-pick {
-  position: absolute;
-  left: 6px;
-  top: 50%;
-  transform: translateY(-50%);
+/* Named run-check rather than run-pick: the compare and history tables already
+   had .run-pick checkboxes, and this rule's display:none was hiding them. */
+.run-check {
   display: none;
+  flex: none;
   align-items: center;
   justify-content: center;
+  padding: 0 5px 0 3px;
   cursor: pointer;
 }
-.run-pick-box {
+.run-check-box {
   display: flex; align-items: center; justify-content: center;
   width: 15px; height: 15px;
   border: 1.5px solid var(--border-strong);
@@ -3146,11 +3148,10 @@ body::before {
   color: transparent;
   transition: background .12s, border-color .12s, color .12s;
 }
-body.is-picking-runs .run-pick { display: flex; }
-body.is-picking-runs .run-row .run-chip { padding-left: 27px; }
+body.is-picking-runs .run-check { display: flex; }
 body.is-picking-runs .run-row .run-forget { display: none; }
-.run-row:hover .run-pick-box { border-color: var(--accent); }
-.run-row.is-picked .run-pick-box {
+.run-row:hover .run-check-box { border-color: var(--accent); }
+.run-row.is-picked .run-check-box {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
@@ -3256,3 +3257,20 @@ body.is-picking-runs .run-chip { cursor: pointer; }
   background: var(--accent);
   color: #fff;
 }
+
+/* --------------------------------------------------------------- doc links */
+.doc-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.doc-link:last-child { border-bottom: 0; }
+.doc-link:hover { background: var(--surface-2); }
+.doc-link-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.doc-link strong { font-size: 13px; font-weight: 500; }
+.doc-link span { font-size: 11.5px; color: var(--text-3); }
+.doc-link svg { flex: none; color: var(--text-3); }
+.doc-link:hover svg { color: var(--accent); }

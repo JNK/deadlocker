@@ -1,6 +1,13 @@
 name: Inserting the child before updating the parent deadlocks
 category: Deadlocks
 tags: [deadlock, foreign-key, lock-upgrade, shared-lock, error-1213]
+docs:
+  - title: FOREIGN KEY constraints
+    url: https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html
+  - title: InnoDB Locking — shared and exclusive locks
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-shared-exclusive-locks
+    note: Why an S lock and an X lock on one record cannot coexist.
+
 description: |
   Two sessions run the *same* code, in the same order, against the *same* rows —
   and deadlock. There is no AB-BA ordering mistake to find here, which is what

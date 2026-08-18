@@ -55,13 +55,13 @@
     '<path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>';
 
   var CHECK =
-    '<span class="run-pick-box" aria-hidden="true">' +
+    '<span class="run-check-box" aria-hidden="true">' +
     '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" ' +
     'stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="m5 12 5 5 9-10"/></svg></span>';
 
   function rowHTML(e) {
-    return '<span class="run-pick" role="checkbox" aria-checked="false" tabindex="0">' +
+    return '<span class="run-check" role="checkbox" aria-checked="false" tabindex="0">' +
       CHECK + '</span>' +
       '<a class="run-chip" href="/run/' + esc(e.run_id) + '">' + chipHTML(e) + '</a>' +
       '<button class="run-forget" type="button" data-forget ' +
@@ -156,7 +156,7 @@
     host.querySelectorAll('[data-run-id]').forEach(function (row) {
       var on = selection.indexOf(row.dataset.runId) >= 0;
       row.classList.toggle('is-picked', on);
-      var box = row.querySelector('.run-pick');
+      var box = row.querySelector('.run-check');
       if (box) box.setAttribute('aria-checked', String(on));
     });
     if (!compareBar) return;
@@ -188,6 +188,20 @@
   if (compareToggle) {
     compareToggle.addEventListener('click', function () { setPicking(!picking); });
   }
+
+  // Anything else on the page can ask for the picker -- the compare view's
+  // "pick different runs", for one. The run log is where the runs are, so
+  // sending people to a second list of the same thing was never right.
+  window.DL.pickRunsToCompare = function () {
+    setPicking(true);
+    var first = host.querySelector('[data-run-id]');
+    if (first && first.scrollIntoView) first.scrollIntoView({ block: 'nearest' });
+  };
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('[data-pick-runs]')) return;
+    e.preventDefault();
+    window.DL.pickRunsToCompare();
+  });
   if (compareCancel) compareCancel.addEventListener('click', function () { setPicking(false); });
   if (compareGo) {
     compareGo.addEventListener('click', function () {
@@ -209,7 +223,7 @@
 
   host.addEventListener('keydown', function (e) {
     if (!picking || (e.key !== ' ' && e.key !== 'Enter')) return;
-    var box = e.target.closest('.run-pick');
+    var box = e.target.closest('.run-check');
     if (!box) return;
     e.preventDefault();
     togglePick(box.closest('[data-run-id]'));

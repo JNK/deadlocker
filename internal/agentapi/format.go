@@ -148,6 +148,22 @@ add a third actor rather than reusing a blocked one.
 - To provoke a deadlock, have two transactions take locks in opposite order,
   or have both take a gap lock over the same gap and then both insert into it.
 
+## Doc links
+
+` + "`docs`" + ` is an optional list of external references, shown beside the
+description. Scenarios explain a behaviour; the manual defines it, and keeping
+the link in the scenario means the two stay together.
+
+` + "```yaml" + `
+docs:
+  - title: InnoDB Locking — gap locks
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-gap-locks
+    note: optional, one line on why this is worth reading
+` + "```" + `
+
+Only http and https URLs are accepted. Link the specific manual anchor for the
+behaviour, not the chapter.
+
 ## Workflow
 
 1. Read existing scenarios with ` + "`list_scenarios`" + ` and ` + "`get_scenario`" + ` for

@@ -1,6 +1,10 @@
 name: One open transaction stops ALTER TABLE, and every reader behind it
 category: Metadata locks
 tags: [metadata-lock, mdl, alter-table, ddl, head-of-line-blocking]
+docs:
+  - title: Metadata locking
+    url: https://dev.mysql.com/doc/refman/8.4/en/metadata-locking.html
+
 description: |
   The stall that takes production down without a single row lock being
   involved.

@@ -28,7 +28,22 @@
   var filter = document.getElementById('case-filter');
   var originBtns = document.querySelectorAll('[data-origin]:not([data-case])');
   if (filter || originBtns.length) {
-    var origin = 'all';
+    // Both filters live in the URL, so a reload keeps them and a filtered view
+    // can be sent to someone. replaceState rather than pushState: typing into a
+    // search box should not fill the back button with keystrokes.
+    var params = new URLSearchParams(window.location.search);
+    var origin = params.get('origin') || 'all';
+    if (['all', 'builtin', 'custom'].indexOf(origin) === -1) origin = 'all';
+    if (filter && params.get('q')) filter.value = params.get('q');
+
+    var syncURL = function () {
+      var next = new URLSearchParams(window.location.search);
+      var q = filter ? filter.value.trim() : '';
+      if (q) next.set('q', q); else next.delete('q');
+      if (origin !== 'all') next.set('origin', origin); else next.delete('origin');
+      var qs = next.toString();
+      history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+    };
 
     var apply = function () {
       var q = filter ? filter.value.trim().toLowerCase() : '';
@@ -49,6 +64,7 @@
       if (empty) {
         empty.hidden = !!document.querySelector('[data-case]:not(.is-hidden)');
       }
+      syncURL();
     };
 
     // The counts are computed from the page rather than passed down, so they
@@ -65,15 +81,22 @@
       });
     })();
 
+    var paintOrigin = function () {
+      originBtns.forEach(function (b) {
+        b.classList.toggle('is-active', b.dataset.origin === origin);
+      });
+    };
     originBtns.forEach(function (btn) {
       btn.addEventListener('click', function () {
         origin = btn.dataset.origin;
-        originBtns.forEach(function (b) {
-          b.classList.toggle('is-active', b === btn);
-        });
+        paintOrigin();
         apply();
       });
     });
+    paintOrigin();
+
+    // Restore whatever the URL asked for before anything is drawn.
+    apply();
 
     if (filter) {
       filter.addEventListener('input', apply);
@@ -87,6 +110,25 @@
       });
     }
   }
+
+  // --------------------------------------------------------- details menus
+  // A <details> dropdown stays open until it is clicked again, which is not
+  // what a menu should do. Clicking anywhere else, or pressing Escape, closes
+  // it -- the behaviour every other menu on the page already has.
+  document.addEventListener('click', function (e) {
+    document.querySelectorAll('details.menu[open]').forEach(function (d) {
+      if (!d.contains(e.target)) d.removeAttribute('open');
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var open = document.querySelector('details.menu[open]');
+    if (!open) return;
+    e.stopPropagation();
+    open.removeAttribute('open');
+    var summary = open.querySelector('summary');
+    if (summary) summary.focus();
+  });
 
   // ------------------------------------------------- submit busy feedback
   // Starting a run can take minutes on the very first pull, so the button has

@@ -19,7 +19,7 @@
       {{if .Diff}}
       <div class="page-actions">
         <a class="btn btn-ghost" href="/case/{{.Diff.A.CaseID}}#case=history">Back to history</a>
-        <a class="btn btn-ghost" href="/compare">Pick different runs</a>
+        <button class="btn btn-ghost" type="button" data-pick-runs>Pick different runs</button>
       </div>
       {{end}}
     </header>

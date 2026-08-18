@@ -1,6 +1,14 @@
 name: Table locks, and the intention locks you never asked for
 category: Fundamentals
 tags: [table-lock, intention-lock, lock-tables, lock-compatibility]
+docs:
+  - title: InnoDB Locking — intention locks
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-intention-locks
+    note: The compatibility matrix, from the source.
+  - title: LOCK TABLES and UNLOCK TABLES
+    url: https://dev.mysql.com/doc/refman/8.4/en/lock-tables.html
+    note: Including the autocommit rule this scenario depends on.
+
 description: |
   Every row lock is announced at the table level first. Before InnoDB takes an X
   lock on a record it takes an **IX** (intention exclusive) lock on the table;

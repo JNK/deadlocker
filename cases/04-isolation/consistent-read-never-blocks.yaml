@@ -1,6 +1,12 @@
 name: A non-locking read is never blocked by a writer
 category: Isolation levels
 tags: [mvcc, consistent-read, snapshot, repeatable-read]
+docs:
+  - title: Consistent nonlocking reads
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-consistent-read.html
+  - title: Transaction isolation levels
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html
+
 description: |
   The counterweight to the rest of this library: most reads take no locks and
   wait for nobody.

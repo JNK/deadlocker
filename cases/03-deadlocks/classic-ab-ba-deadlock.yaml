@@ -1,6 +1,13 @@
 name: The classic AB-BA deadlock
 category: Deadlocks
 tags: [deadlock, error-1213, lock-ordering]
+docs:
+  - title: Deadlocks in InnoDB
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks.html
+  - title: How to minimize and handle deadlocks
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks-handling.html
+    note: The lock-ordering advice this scenario demonstrates.
+
 description: |
   Two transactions, two rows, opposite order. A locks 10 then wants 20; B locks
   20 then wants 10. Neither can proceed and neither will ever give up, so

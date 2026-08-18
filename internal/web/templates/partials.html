@@ -63,6 +63,14 @@
     {{range .Runs}}
     <div class="run-row{{if .Live}} is-live{{end}}{{if eq .RunID $.ActiveRun}} is-active{{end}}"
          data-run-id="{{.RunID}}"{{if .Live}} data-live="1"{{end}}>
+      <!-- The picker is here rather than added by script, so a server-rendered
+           row and a reconciled one have the same shape. They did not, which put
+           a lone checkbox beside whichever row happened to be new. -->
+      <span class="run-check" role="checkbox" aria-checked="false" tabindex="0">
+        <span class="run-check-box" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"/></svg>
+        </span>
+      </span>
       <a class="run-chip" href="/run/{{.RunID}}">
         <span class="dot status-{{.Status}}"></span>
         <span class="run-chip-body">

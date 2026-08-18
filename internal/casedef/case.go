@@ -45,6 +45,19 @@ type Actor struct {
 	Accent string `yaml:"accent,omitempty" json:"accent"`
 }
 
+// DocLink points at something worth reading alongside a scenario -- usually the
+// MySQL manual page for whatever it demonstrates.
+//
+// Scenarios explain a behaviour; the manual defines it. Keeping the reference in
+// the scenario means the two stay together, rather than the link living in
+// someone's notes.
+type DocLink struct {
+	Title string `yaml:"title" json:"title"`
+	URL   string `yaml:"url" json:"url"`
+	// Note is an optional line on why this link is worth following.
+	Note string `yaml:"note,omitempty" json:"note,omitempty"`
+}
+
 // Step is a single statement issued by one actor.
 type Step struct {
 	Actor string `yaml:"actor" json:"actor"`
@@ -79,16 +92,18 @@ type MySQLConfig struct {
 
 // Case is one scenario.
 type Case struct {
-	ID          string      `yaml:"id,omitempty" json:"id"`
-	Name        string      `yaml:"name" json:"name"`
-	Category    string      `yaml:"category,omitempty" json:"category"`
-	Description string      `yaml:"description,omitempty" json:"description"`
-	Tags        []string    `yaml:"tags,omitempty" json:"tags,omitempty"`
-	MySQL       MySQLConfig `yaml:"mysql,omitempty" json:"mysql"`
-	Schema      []string    `yaml:"schema,omitempty" json:"schema"`
-	Seed        []string    `yaml:"seed,omitempty" json:"seed"`
-	Actors      []Actor     `yaml:"actors" json:"actors"`
-	Steps       []Step      `yaml:"steps" json:"steps"`
+	ID          string   `yaml:"id,omitempty" json:"id"`
+	Name        string   `yaml:"name" json:"name"`
+	Category    string   `yaml:"category,omitempty" json:"category"`
+	Description string   `yaml:"description,omitempty" json:"description"`
+	Tags        []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	// Docs are external references, shown beside the description.
+	Docs   []DocLink   `yaml:"docs,omitempty" json:"docs,omitempty"`
+	MySQL  MySQLConfig `yaml:"mysql,omitempty" json:"mysql"`
+	Schema []string    `yaml:"schema,omitempty" json:"schema"`
+	Seed   []string    `yaml:"seed,omitempty" json:"seed"`
+	Actors []Actor     `yaml:"actors" json:"actors"`
+	Steps  []Step      `yaml:"steps" json:"steps"`
 
 	// Path is where the case was loaded from. Empty for ad-hoc playground cases.
 	Path string `yaml:"-" json:"path,omitempty"`
@@ -186,6 +201,24 @@ func (c *Case) Validate() error {
 		}
 		if s.Label == "" {
 			s.Label = summarise(s.SQL)
+		}
+	}
+
+	for i := range c.Docs {
+		d := &c.Docs[i]
+		d.URL = strings.TrimSpace(d.URL)
+		if d.URL == "" {
+			problems = append(problems, fmt.Sprintf("docs[%d]: url is required", i+1))
+			continue
+		}
+		// Only http(s). A scenario is a file people share, and a doc link is the
+		// one place in it that a reader will click without thinking.
+		if !strings.HasPrefix(d.URL, "http://") && !strings.HasPrefix(d.URL, "https://") {
+			problems = append(problems, fmt.Sprintf(
+				"docs[%d]: url must start with http:// or https://", i+1))
+		}
+		if strings.TrimSpace(d.Title) == "" {
+			d.Title = d.URL
 		}
 	}
 

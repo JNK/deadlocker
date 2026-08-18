@@ -117,7 +117,8 @@ merely mentions them.
 
 The library filters two ways at once: free text, and origin — **built in** vs
 **custom**, since the shipped scenarios are documentation and your own are work.
-Category headings stick as you scroll.
+Category headings stick as you scroll, and both filters live in the URL, so a
+reload keeps them and a filtered view can be sent to someone.
 
 **Import** a scenario by dropping a file anywhere on the library page: a bare
 `.yaml`, or a `.deadlocker.json` bundle someone exported. Importing never
@@ -133,7 +134,8 @@ leaves anything still running alone. Deletions are broadcast, so a second tab
 does not keep offering a run that is gone.
 
 **Compare** in the footer turns the log into a picker: tick two runs and go.
-Escape backs out.
+Escape backs out. "Pick different runs" on a comparison does the same thing —
+the run log is where the runs are, so a second list of them was never right.
 
 Runs that have aged out, and scenarios that have been deleted or renamed, get a
 proper page rather than a bare 404 — the sidebar is still there, because what
@@ -234,6 +236,17 @@ padded or truncated rather than left to break the table's shape.
 In the editor, moving the caret into a step lights that step up in the preview
 beside it — the two panes are halves of one document, and without that they are
 only related by the reader holding both in their head.
+
+`docs` is an optional list of external references, shown beside the description
+on the scenario page. Scenarios explain a behaviour; the manual defines it, and
+keeping the link in the file means the two stay together:
+
+```yaml
+docs:
+  - title: InnoDB Locking — gap locks
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-gap-locks
+    note: optional, one line on why it is worth reading
+```
 
 **Ordering rule.** A connection runs one statement at a time, so a blocked actor
 cannot accept its next step. Put the statement that releases the lock — usually
