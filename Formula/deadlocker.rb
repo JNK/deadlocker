@@ -14,7 +14,7 @@ class Deadlocker < Formula
   homepage "https://github.com/JNK/deadlocker"
   url "https://github.com/JNK/deadlocker/archive/refs/tags/v1.0.0.tar.gz"
   version "1.0.0"
-  sha256 "54501047e7dd72b97b232cb701aaea783455bd2e0297de8759efe29f60918870"
+  sha256 "f9401ca29ec00b30f725a306ba70a9d9add2786af35af6dbff3605577606bc0e"
 
   depends_on "go" => :build
 
