@@ -21,7 +21,7 @@ help:
 	@echo "  pkg                Build a signed, notarizable installer into dist/"
 	@echo "                     (NOTARY_PROFILE=<notarytool profile> also notarizes and staples)"
 	@echo "  release            Publish the newest dist/ installer as a GitHub release"
-	@echo "  cask               Point the Homebrew cask at the newest dist/ installer"
+	@echo "  formula            Point the Homebrew formula at the newest tag"
 	@echo ""
 	@echo "Checks:"
 	@echo "  test               Go tests and the browser-free JS suites"
@@ -78,15 +78,14 @@ release:
 	@chmod +x scripts/release.sh
 	@./scripts/release.sh
 
-# The cask points at one exact file, so it is generated from that file rather
-# than edited. `make release` does this for you; this is for regenerating after
-# a re-staple.
-cask:
-	@chmod +x scripts/cask.sh
-	@./scripts/cask.sh
+# The formula points at a published tag, so it can only be generated once that
+# tag exists. `make release` does this for you.
+formula:
+	@chmod +x scripts/formula.sh
+	@./scripts/formula.sh
 
 clean:
 	@echo "Cleaning up..."
 	rm -rf bin dist
 
-.PHONY: help build install uninstall test verify pkg release cask clean
+.PHONY: help build install uninstall test verify pkg release formula clean

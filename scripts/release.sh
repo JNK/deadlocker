@@ -91,15 +91,15 @@ EOF
         --notes-file "$notes"
 fi
 
-# The cask has to describe the file that was just published, so it is
-# regenerated from it rather than remembered.
-step "Updating the Homebrew cask"
-"$REPO_ROOT/scripts/cask.sh"
+# The formula builds from the tag's source tarball, whose checksum can only be
+# taken once the tag is on GitHub — which it now is.
+step "Updating the Homebrew formula"
+"$REPO_ROOT/scripts/formula.sh" "$TAG"
 cat <<EOF
 
-The cask now points at $TAG. Commit it so \`brew install\` finds it:
+The formula now points at $TAG. Commit it so \`brew install\` finds it:
 
-  git add Casks/deadlocker.rb && git commit -m "Point the cask at $TAG" && git push
+  git add Formula/deadlocker.rb && git commit -m "Point the formula at $TAG" && git push
 
 EOF
 

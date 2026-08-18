@@ -88,18 +88,17 @@ parser will accept.
 
 ## Installing it
 
-On macOS, from the tap:
+From the tap:
 
 ```sh
 brew tap jnk/deadlocker https://github.com/JNK/deadlocker
-brew install --cask deadlocker
+brew install jnk/deadlocker/deadlocker
 ```
 
-That installs the signed, notarized universal build published with each release
-— the same `.pkg` you can download by hand from the
-[releases page](https://github.com/JNK/deadlocker/releases). It writes one file,
-`~/.local/bin/deadlocker`, needs no administrator password, and `brew uninstall
---cask deadlocker` takes it away again.
+Or download the signed, notarized macOS installer from the
+[releases page](https://github.com/JNK/deadlocker/releases) and double-click it.
+It is a universal build — Apple Silicon and Intel — and installs one file,
+`~/.local/bin/deadlocker`, without asking for an administrator password.
 
 Or build it yourself, anywhere Go runs:
 

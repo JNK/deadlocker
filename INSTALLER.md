@@ -8,17 +8,20 @@ make pkg          # sign, notarize, staple
 make release      # publish it as a GitHub release, and point the cask at it
 ```
 
-`make release` regenerates `Casks/deadlocker.rb` from the package it published,
-so the Homebrew cask always describes a file that exists with the checksum it
-actually has. Commit that file afterwards — the tap is this repository:
+`make release` also points `Formula/deadlocker.rb` at the tag it just published
+and prints the commit command. The tap is this repository:
 
 ```sh
 brew tap jnk/deadlocker https://github.com/JNK/deadlocker
-brew install --cask deadlocker
+brew install jnk/deadlocker/deadlocker
 ```
 
-Stapling a notarization ticket rewrites the package, so its checksum changes.
-If you staple by hand after the fact, run `make cask` again.
+**Why a formula and not a cask on this installer.** Homebrew installs a `.pkg`
+with `sudo installer -target /`, and this one is deliberately a per-user
+package that needs no administrator password — so a cask would demand a
+password to put a file in your own home directory, and install it as root.
+The formula builds from the tag's source tarball instead. The installer stays
+on the release for anyone who would rather double-click it.
 
 `dist/` is not in the repository. A 15MB binary has no business in git history,
 so a built installer becomes downloadable by being attached to a release.
