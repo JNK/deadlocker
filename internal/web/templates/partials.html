@@ -47,24 +47,39 @@
        browsed and searched. -->
   <div class="sidebar-runs-head">
     <span class="nav-group-title">Runs</span>
-    <a class="sidebar-link" href="/compare">compare</a>
+    <!-- Compare lives in the footer with the other destinations; a second link
+         to it here was one too many. This is where the count goes instead. -->
+    <span class="nav-group-count" id="runs-count">{{if .Runs}}{{len .Runs}}{{end}}</span>
+    <button class="sidebar-clear" id="runs-clear" type="button"
+            title="Clear the run log"{{if not .Runs}} hidden{{end}}>
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>
+    </button>
   </div>
 
   <nav class="sidebar-history" id="sidebar-history">
+    <!-- The row is a wrapper rather than a bare link because it holds a second
+         control: a button nested inside an anchor is not valid HTML, and does
+         not behave. -->
     {{range .Runs}}
-    <a class="run-chip{{if .Live}} is-live{{end}}{{if eq .RunID $.ActiveRun}} is-active{{end}}"
-       data-run-id="{{.RunID}}" href="/run/{{.RunID}}">
-      <span class="dot status-{{.Status}}"></span>
-      <span class="run-chip-body">
-        <span class="run-chip-name">{{.CaseName}}</span>
-        <span class="run-chip-meta">
-          <span class="mono">{{.Cursor}}/{{.Total}}</span>
-          {{if .Live}}<span class="run-chip-live">live</span>
-          {{else if .Outcome}}<span class="outcome outcome-{{.Outcome}}">{{outcomeLabel .Outcome}}</span>{{end}}
-          <span class="run-chip-time">{{clock .StartedAt}}</span>
+    <div class="run-row{{if .Live}} is-live{{end}}{{if eq .RunID $.ActiveRun}} is-active{{end}}"
+         data-run-id="{{.RunID}}"{{if .Live}} data-live="1"{{end}}>
+      <a class="run-chip" href="/run/{{.RunID}}">
+        <span class="dot status-{{.Status}}"></span>
+        <span class="run-chip-body">
+          <span class="run-chip-name">{{.CaseName}}</span>
+          <span class="run-chip-meta">
+            <span class="mono">{{.Cursor}}/{{.Total}}</span>
+            {{if .Live}}<span class="run-chip-live">live</span>
+            {{else if .Outcome}}<span class="outcome outcome-{{.Outcome}}">{{outcomeLabel .Outcome}}</span>{{end}}
+            <span class="run-chip-time">{{clock .StartedAt}}</span>
+          </span>
         </span>
-      </span>
-    </a>
+      </a>
+      <button class="run-forget" type="button" data-forget
+              aria-label="Remove this run from the log" title="Remove from the log">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>
+      </button>
+    </div>
     {{else}}
     <p class="sidebar-empty">No runs yet. Open a scenario and press Run.</p>
     {{end}}

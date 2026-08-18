@@ -109,6 +109,31 @@
     };
     scroller.addEventListener('scroll', update, { passive: true });
     update();
+
+    // Anything else that wants to stick has to stick *below* this header, and
+    // its height is not a constant: the lede wraps, the actions wrap, and some
+    // pages put a tab bar in it. Publishing the measured height as a custom
+    // property lets CSS position the rest without guessing.
+    var publish = function () {
+      scroller.style.setProperty('--sticky-top', header.offsetHeight + 'px');
+    };
+    publish();
+    if (window.ResizeObserver) new ResizeObserver(publish).observe(header);
+    else window.addEventListener('resize', publish);
+
+    // A section heading only earns its separating hairline once something is
+    // actually passing under it.
+    var sections = scroller.querySelectorAll('.grid-heading');
+    if (sections.length) {
+      var mark = function () {
+        var edge = header.getBoundingClientRect().bottom;
+        sections.forEach(function (h) {
+          h.classList.toggle('is-stuck', h.getBoundingClientRect().top <= edge + 1);
+        });
+      };
+      scroller.addEventListener('scroll', mark, { passive: true });
+      mark();
+    }
   });
 
   function isTypingTarget(el) {

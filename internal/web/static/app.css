@@ -489,7 +489,28 @@ pre.error-text { color: var(--danger); border-color: var(--danger); background: 
 
 /* ------------------------------------------------------- library / cards */
 
-.grid-heading { margin: 22px 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); }
+/* Category headings stick under the page header, so it is always clear which
+   group you are looking at once the list is longer than a screen. --sticky-top
+   is the measured header height, published by app.js. */
+.grid-heading {
+  position: sticky;
+  top: calc(var(--sticky-top, 0px) - 1px);
+  z-index: 10;
+  margin: 22px -28px 10px;
+  padding: 8px 28px 7px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-3);
+  /* Opaque where it overlaps the cards passing underneath. The header above is
+     frosted; a second blurred layer on top of it reads as smudged. */
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+}
+.grid-heading.is-stuck { border-bottom-color: var(--border); }
+/* The first heading sits directly under the header, where the top margin would
+   otherwise show a strip of background between the two. */
+.card-grid > .grid-heading:first-child { margin-top: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
 .case-card {
   display: block;
@@ -2386,12 +2407,9 @@ body::before {
 
 .sidebar-runs-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   padding: 0 2px;
 }
-.sidebar-link { font-size: 11.5px; color: var(--text-3); }
-.sidebar-link:hover { color: var(--accent); }
 
 .sidebar-history {
   flex: 1;
@@ -2411,10 +2429,6 @@ body::before {
   border-radius: var(--radius-xs);
 }
 .sidebar-history .run-chip:hover { background: var(--surface-3); }
-.sidebar-history .run-chip.is-live {
-  background: var(--accent-soft);
-  border-color: var(--accent-border);
-}
 .sidebar-history .dot { margin-top: 5px; }
 .run-chip-body { flex: 1; min-width: 0; }
 .run-chip-name {
@@ -2643,13 +2657,13 @@ body::before {
 
 /* Selection is the highlight; "live" is a state badge. Colouring every live
    run made it look like several things were selected at once. */
-.sidebar-history .run-chip.is-live { background: transparent; border-color: transparent; }
-.sidebar-history .run-chip.is-active {
+.run-row.is-live .run-chip { background: transparent; border-color: transparent; }
+.run-row.is-active .run-chip {
   background: var(--accent-soft);
   border-color: var(--accent-border);
 }
-.sidebar-history .run-chip.is-active .run-chip-name { color: var(--accent); font-weight: 600; }
-.sidebar-history .run-chip.is-active:hover { background: var(--accent-soft); }
+.run-row.is-active .run-chip-name { color: var(--accent); font-weight: 600; }
+.run-row.is-active .run-chip:hover { background: var(--accent-soft); }
 
 /* A statement waiting on a lock is on a clock: innodb_lock_wait_timeout will
    end it. Showing the time left turns "it is stuck" into "it has 12s left". */
@@ -2961,3 +2975,83 @@ body::before {
 }
 .dock-collapse:hover { background: var(--surface-3); color: var(--text); }
 .dock-collapse svg { transition: transform .16s; }
+
+/* ------------------------------------------------------------ prose tables */
+/* A compatibility matrix is the clearest way to say what conflicts with what,
+   so descriptions use them. Ruled horizontally only: vertical lines in a small
+   table add noise without adding structure. */
+.prose .md-table {
+  width: auto;
+  min-width: min(100%, 420px);
+  margin: 16px 0;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.prose .md-table th,
+.prose .md-table td {
+  padding: 7px 14px 7px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.prose .md-table thead th {
+  border-bottom: 1px solid var(--border-strong);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.prose .md-table tbody tr:last-child td { border-bottom: 0; }
+.prose .md-table td.md-right, .prose .md-table th.md-right { text-align: right; padding-right: 0; }
+.prose .md-table td.md-center, .prose .md-table th.md-center { text-align: center; }
+/* The first column of a matrix is a row label, and reads better as one. */
+.prose .md-table tbody td:first-child { font-weight: 600; color: var(--text-2); }
+
+/* ----------------------------------------------------------- run log rows */
+/* The row holds the link and a delete button side by side. A button nested
+   inside an anchor is neither valid nor well-behaved, so the anchor fills the
+   row and the button overlays its right edge. */
+.run-row { position: relative; }
+.run-row .run-chip { padding-right: 26px; }
+
+.run-forget {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  padding: 0;
+  border: 0; border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  /* Hidden until the row is under the pointer: a trash can on every row of a
+     list you are only reading is an invitation to a mistake. */
+  opacity: 0;
+  transition: opacity .12s, color .12s, background .12s;
+}
+.run-row:hover .run-forget,
+.run-forget:focus-visible { opacity: 1; }
+.run-forget:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* The count and the bulk clear sit in the section header, where the second
+   link to Compare used to be. */
+.sidebar-runs-head { gap: 6px; }
+.sidebar-runs-head .nav-group-title { padding-right: 0; }
+.nav-group-count {
+  margin-right: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-clear {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  padding: 0;
+  border: 0; border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.sidebar-clear:hover { background: var(--danger-soft); color: var(--danger); }

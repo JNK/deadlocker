@@ -115,6 +115,12 @@ menu. Ranking prefers a title prefix over a mid-word hit over a subsequence, so
 typing `gap` lands on the scenario named after gap locks rather than one that
 merely mentions them.
 
+The sidebar is a run log: it keeps up to 500 runs, shows the count, and each
+row has a trash can to drop it. Removing a run that is still open closes it and
+drops its scratch database, so that one asks first; a finished run is one line
+in a list and goes without ceremony. **Clear** at the top empties the log but
+leaves anything still running alone.
+
 **Step** submits the next statement. **Play** runs until the scenario ends or an
 actor blocks. <kbd>Space</kbd> steps, <kbd>↑</kbd>/<kbd>↓</kbd> move between
 steps, <kbd>/</kbd> focuses the scenario filter. The arrow keys navigate steps
@@ -193,7 +199,19 @@ steps:
 ```
 
 `description` is rendered as Markdown on the scenario page: headings, lists,
-`code`, **bold**, links and fenced blocks all work.
+`code`, **bold**, links, fenced blocks and pipe tables all work. A lock
+compatibility matrix is a table, so tables earn their place:
+
+```
+|     | IS  | IX  | S   | X   |
+|-----|-----|-----|-----|-----|
+| IS  | yes | yes | yes | no  |
+| IX  | yes | yes | no  | no  |
+```
+
+Alignment colons (`:--`, `:-:`, `--:`) are honoured, outer pipes are optional,
+`\|` escapes a pipe inside a cell, and a row with the wrong number of cells is
+padded or truncated rather than left to break the table's shape.
 
 **Ordering rule.** A connection runs one statement at a time, so a blocked actor
 cannot accept its next step. Put the statement that releases the lock — usually

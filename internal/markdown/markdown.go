@@ -28,6 +28,9 @@ var (
 	reAutoLink  = regexp.MustCompile(`(^|\s)(https?://[^\s<>()]+)`)
 	reSafeURL   = regexp.MustCompile(`^(https?://|/|#|\./|\.\./)`)
 	reCodeFence = regexp.MustCompile("^\\s*```\\s*(\\w*)\\s*$")
+	// The row of dashes under a table's header. Alignment colons are optional
+	// on either end of each cell.
+	reTableDelim = regexp.MustCompile(`^\s*\|?(\s*:?-+:?\s*\|)*\s*:?-+:?\s*\|?\s*$`)
 )
 
 // Render converts markdown source to HTML.
@@ -99,6 +102,18 @@ func Render(src string) template.HTML {
 			continue
 		}
 
+		// A table is a header row followed by a delimiter row. Both are checked
+		// before anything else claims them: a delimiter row of bare dashes would
+		// otherwise be read as a horizontal rule.
+		if n := tableAt(lines, i); n > 0 {
+			flushPara()
+			closeLists(0)
+			closeQuote()
+			writeTable(&out, lines[i:i+n])
+			i += n - 1
+			continue
+		}
+
 		if isHorizontalRule(line) {
 			flushPara()
 			closeLists(0)
@@ -160,6 +175,118 @@ func Render(src string) template.HTML {
 	closeLists(0)
 	closeQuote()
 	return template.HTML(out.String())
+}
+
+// tableAt reports how many lines a table starting at lines[i] occupies, or 0 if
+// there is no table there.
+//
+// The delimiter row alone is not enough to identify one: "---" is a horizontal
+// rule. A table requires a header row containing a pipe, a delimiter row with
+// the same number of cells, and both are then consumed together.
+func tableAt(lines []string, i int) int {
+	if i+1 >= len(lines) {
+		return 0
+	}
+	header := lines[i]
+	if !strings.Contains(header, "|") {
+		return 0
+	}
+	delim := lines[i+1]
+	if !strings.Contains(delim, "|") || !reTableDelim.MatchString(delim) {
+		return 0
+	}
+	if len(splitRow(header)) != len(splitRow(delim)) {
+		return 0
+	}
+
+	n := 2
+	for i+n < len(lines) {
+		row := lines[i+n]
+		if strings.TrimSpace(row) == "" || !strings.Contains(row, "|") {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// splitRow splits a table row into cells, honouring backslash-escaped pipes so
+// a cell can contain one.
+func splitRow(line string) []string {
+	t := strings.TrimSpace(line)
+	var cells []string
+	var cur strings.Builder
+	for j := 0; j < len(t); j++ {
+		if t[j] == '\\' && j+1 < len(t) && t[j+1] == '|' {
+			cur.WriteByte('|')
+			j++
+			continue
+		}
+		if t[j] == '|' {
+			cells = append(cells, strings.TrimSpace(cur.String()))
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(t[j])
+	}
+	cells = append(cells, strings.TrimSpace(cur.String()))
+
+	// A leading or trailing pipe produces an empty cell at each end, which is
+	// punctuation rather than content. An interior empty cell is kept.
+	if len(cells) > 1 && cells[0] == "" && strings.HasPrefix(t, "|") {
+		cells = cells[1:]
+	}
+	if len(cells) > 1 && cells[len(cells)-1] == "" && strings.HasSuffix(t, "|") {
+		cells = cells[:len(cells)-1]
+	}
+	return cells
+}
+
+// alignOf reads a delimiter cell as an alignment.
+func alignOf(cell string) string {
+	c := strings.TrimSpace(cell)
+	left := strings.HasPrefix(c, ":")
+	right := strings.HasSuffix(c, ":")
+	switch {
+	case left && right:
+		return " class=\"md-center\""
+	case right:
+		return " class=\"md-right\""
+	default:
+		return ""
+	}
+}
+
+func writeTable(out *strings.Builder, block []string) {
+	header := splitRow(block[0])
+	aligns := make([]string, len(header))
+	for j, cell := range splitRow(block[1]) {
+		if j < len(aligns) {
+			aligns[j] = alignOf(cell)
+		}
+	}
+
+	out.WriteString("<table class=\"md-table\"><thead><tr>")
+	for j, cell := range header {
+		out.WriteString("<th" + aligns[j] + ">" + inline(cell) + "</th>")
+	}
+	out.WriteString("</tr></thead><tbody>")
+
+	for _, line := range block[2:] {
+		cells := splitRow(line)
+		out.WriteString("<tr>")
+		// Rows are padded or truncated to the header width, so a miscounted row
+		// cannot break the table's shape.
+		for j := range header {
+			text := ""
+			if j < len(cells) {
+				text = cells[j]
+			}
+			out.WriteString("<td" + aligns[j] + ">" + inline(text) + "</td>")
+		}
+		out.WriteString("</tr>")
+	}
+	out.WriteString("</tbody></table>")
 }
 
 type listLevel struct {

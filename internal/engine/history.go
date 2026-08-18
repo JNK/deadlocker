@@ -8,8 +8,8 @@ import (
 
 // historyLimitRuns caps how many past runs are retained. Records hold step
 // results and one lock snapshot -- not the wire stream, which is far too large
-// to keep around -- so this stays small.
-const historyLimitRuns = 200
+// to keep around -- so a few hundred is affordable.
+const historyLimitRuns = 500
 
 // Record is a finished run, trimmed to what is worth keeping: everything the
 // case page and the comparison view need, and nothing that grows without bound.
@@ -166,6 +166,34 @@ func (h *History) Put(rec *Record) {
 		h.records = h.records[1:]
 		delete(h.byID, drop.RunID)
 	}
+}
+
+// Forget drops one record. A run log you cannot prune is one you stop reading,
+// and a run that was a mistake should not have to age out on its own.
+func (h *History) Forget(runID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.byID[runID]; !ok {
+		return false
+	}
+	delete(h.byID, runID)
+	for i, rec := range h.records {
+		if rec.RunID == runID {
+			h.records = append(h.records[:i], h.records[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
+// Clear drops every record, returning how many went.
+func (h *History) Clear() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := len(h.records)
+	h.records = nil
+	h.byID = map[string]*Record{}
+	return n
 }
 
 // Get returns one record.

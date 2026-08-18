@@ -46,7 +46,18 @@
   }
 
   function classesFor(e, active) {
-    return 'run-chip' + (e.live ? ' is-live' : '') + (e.run_id === active ? ' is-active' : '');
+    return 'run-row' + (e.live ? ' is-live' : '') + (e.run_id === active ? ' is-active' : '');
+  }
+
+  var TRASH =
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M4 6h16M9 6V4h6v2M7 6l1 14h8l1-14"/></svg>';
+
+  function rowHTML(e) {
+    return '<a class="run-chip" href="/run/' + esc(e.run_id) + '">' + chipHTML(e) + '</a>' +
+      '<button class="run-forget" type="button" data-forget ' +
+      'aria-label="Remove this run from the log" title="Remove from the log">' + TRASH + '</button>';
   }
 
   function reconcile(entries) {
@@ -63,19 +74,22 @@
         // Only touch what changed, so a row the user is hovering stays put.
         var cls = classesFor(e, active);
         if (el.className !== cls) el.className = cls;
+        // The signature covers only the chip, so the delete button is never
+        // re-created underneath a pointer that is already on it.
         var next = chipHTML(e);
         if (el.dataset.sig !== next) {
-          el.innerHTML = next;
+          el.querySelector('.run-chip').innerHTML = next;
           el.dataset.sig = next;
         }
+        if (e.live) el.dataset.live = '1'; else delete el.dataset.live;
         return el;
       }
-      el = document.createElement('a');
+      el = document.createElement('div');
       el.className = classesFor(e, active);
       el.dataset.runId = e.run_id;
-      el.href = '/run/' + e.run_id;
-      el.innerHTML = chipHTML(e);
-      el.dataset.sig = el.innerHTML;
+      if (e.live) el.dataset.live = '1';
+      el.innerHTML = rowHTML(e);
+      el.dataset.sig = chipHTML(e);
       return el;
     });
 
@@ -93,6 +107,69 @@
       p.textContent = 'No runs yet. Open a scenario and press Run.';
       host.appendChild(p);
     }
+    paintCount(ordered.length);
+  }
+
+  // ---------------------------------------------------------------- count
+
+  var countEl = document.getElementById('runs-count');
+  var clearBtn = document.getElementById('runs-clear');
+
+  function paintCount(n) {
+    if (countEl) countEl.textContent = n ? String(n) : '';
+    if (clearBtn) clearBtn.hidden = !n;
+  }
+
+  // ------------------------------------------------------------- removal
+
+  function forget(row) {
+    var id = row.dataset.runId;
+    if (!id) return;
+    var go = function () {
+      // Remove it locally first: the list is reconciled from the server anyway,
+      // and waiting for a round trip to acknowledge a click reads as a miss.
+      row.remove();
+      paintCount(host.querySelectorAll('[data-run-id]').length);
+      window.DL.postJSON('/api/runs/' + encodeURIComponent(id) + '/forget', {})
+        .then(refresh)
+        .catch(refresh);
+    };
+
+    // A finished run is one line in a log and costs nothing to lose. A live one
+    // is a running container's worth of state, so that gets a question.
+    if (!row.dataset.live) { go(); return; }
+    window.DL.confirm({
+      title: 'Close and remove this run?',
+      body: 'It is still open. Removing it closes the connections and drops its ' +
+        'scratch database.',
+      confirm: 'Close and remove',
+      cancel: 'Keep it',
+      danger: true
+    }).then(function (ok) { if (ok) go(); });
+  }
+
+  host.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-forget]');
+    if (!btn) return;
+    // The button sits inside the row, next to the link that fills it.
+    e.preventDefault();
+    e.stopPropagation();
+    forget(btn.closest('[data-run-id]'));
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function () {
+      window.DL.confirm({
+        title: 'Clear the run log?',
+        body: 'Every finished run is removed. Runs that are still open are kept.',
+        confirm: 'Clear it',
+        cancel: 'Cancel',
+        danger: true
+      }).then(function (ok) {
+        if (!ok) return;
+        window.DL.postJSON('/api/runs/clear', {}).then(refresh);
+      });
+    });
   }
 
   // Refreshes are coalesced: stepping a run emits an event per step, and one

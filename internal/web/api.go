@@ -209,6 +209,43 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": saved.Version})
 }
 
+// ------------------------------------------------------------- run log
+
+// handleForgetRun removes one run from the log. A run still open is closed
+// first: taking it out of the log while it holds a scratch database and a set of
+// connections would leak both.
+func (s *Server) handleForgetRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, live := s.mgr.Get(id); live {
+		if err := s.mgr.CloseRun(id); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+	}
+	s.mgr.History().Forget(id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleClearRuns empties the log. Runs that are still open are left alone:
+// clearing a list is a tidying action, not a request to tear down work in
+// progress.
+func (s *Server) handleClearRuns(w http.ResponseWriter, r *http.Request) {
+	live := map[string]bool{}
+	for _, run := range s.mgr.List() {
+		live[run.State().ID] = true
+	}
+	n := 0
+	for _, rec := range s.mgr.History().All() {
+		if live[rec.RunID] {
+			continue
+		}
+		if s.mgr.History().Forget(rec.RunID) {
+			n++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n, "kept": len(live)})
+}
+
 // ------------------------------------------------------- command palette
 
 // paletteItem is one addressable thing in the app.

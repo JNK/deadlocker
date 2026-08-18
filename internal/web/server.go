@@ -188,6 +188,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/history", s.handleHistoryAPI)
 	mux.HandleFunc("GET /api/runs", s.handleRunsAPI)
 	mux.HandleFunc("GET /api/jobs", s.handleJobsAPI)
+	mux.HandleFunc("POST /api/runs/clear", s.handleClearRuns)
+	mux.HandleFunc("POST /api/runs/{id}/forget", s.handleForgetRun)
 	mux.HandleFunc("GET /analysis/{id}", s.handleAnalysisPage)
 	mux.HandleFunc("POST /api/analysis/{id}/apply", s.handleApplyShrink)
 	mux.HandleFunc("POST /api/analyse/{kind}", s.handleAnalyse)
@@ -360,6 +362,12 @@ type historyEntry struct {
 	Live      bool      `json:"live"`
 }
 
+// sidebarRunLimit is how many runs the log shows. It matches the engine's own
+// retention cap, so the sidebar shows everything that is still kept rather than
+// a window onto it -- the list is virtual-scrolled by the browser and reconciled
+// by id, so length costs little.
+const sidebarRunLimit = 500
+
 func (s *Server) base(title, nav string) *pageData {
 	_ = s.lib.Load()
 	pd := &pageData{
@@ -399,7 +407,7 @@ func (s *Server) base(title, nav string) *pageData {
 			Status: rec.Status, Outcome: rec.Outcome,
 			Cursor: rec.Submitted, Total: len(rec.Steps), StartedAt: rec.StartedAt,
 		})
-		if len(pd.Runs) >= 30 {
+		if len(pd.Runs) >= sidebarRunLimit {
 			break
 		}
 	}
