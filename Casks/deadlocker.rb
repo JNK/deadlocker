@@ -4,8 +4,8 @@
 # version, the file name and the checksum cannot drift from what is on the
 # release. Edit scripts/cask.sh rather than this file.
 cask "deadlocker" do
-  version "0.0.0"
-  sha256 :no_check
+  version "0.1.0"
+  sha256 "6f382da56b69684ebe66383022d0477b560f28cf95a7eff297fb3c364d95362a"
 
   url "https://github.com/JNK/deadlocker/releases/download/v#{version}/Deadlocker-v#{version}.pkg",
       verified: "github.com/JNK/deadlocker/"
