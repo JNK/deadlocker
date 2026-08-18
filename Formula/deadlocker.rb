@@ -12,9 +12,9 @@
 class Deadlocker < Formula
   desc "MySQL lock playground: provoke a deadlock and read the locks that caused it"
   homepage "https://github.com/JNK/deadlocker"
-  url "https://github.com/JNK/deadlocker/archive/refs/tags/v0.1.0.tar.gz"
-  version "0.1.0"
-  sha256 "d0b5f3fc0f2d018c6dd9515bd580009ce44d8fad87055380559496dec6c57c15"
+  url "https://github.com/JNK/deadlocker/archive/refs/tags/v0.1.1.tar.gz"
+  version "0.1.1"
+  sha256 "97061d6aa72ce2a09111cfea6ad8abc6ab3f54f2d3f17b9fd2349f37625b2160"
 
   depends_on "go" => :build
 
