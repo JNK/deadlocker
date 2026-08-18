@@ -49,6 +49,18 @@ type SeedResult struct {
 	Skipped int
 }
 
+// BuiltInStatus reports how many built-in scenarios there are and how many are
+// already present in dir, so the UI can offer the import truthfully.
+func BuiltInStatus(dir string) (total, present int) {
+	for rel := range builtIn {
+		total++
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err == nil {
+			present++
+		}
+	}
+	return total, present
+}
+
 // Seed copies the built-in scenarios into dir, skipping any file that already
 // exists. Existing files are never overwritten: once a scenario is on disk it
 // belongs to the user, who may well have edited it.

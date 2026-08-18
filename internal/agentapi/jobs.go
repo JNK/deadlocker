@@ -28,7 +28,7 @@ type Job struct {
 	Kind       string    `json:"kind"`
 	ScenarioID string    `json:"scenario_id"`
 	Name       string    `json:"name"`
-	Status     string    `json:"status"` // running | done | failed
+	Status     string    `json:"status"` // running | done | failed | cancelled
 	Progress   string    `json:"progress"`
 	Started    time.Time `json:"started"`
 	Ended      time.Time `json:"ended,omitempty"`
@@ -36,6 +36,11 @@ type Job struct {
 
 	Matrix *MatrixResult `json:"matrix,omitempty"`
 	Shrink *ShrinkResult `json:"shrink,omitempty"`
+
+	// cancel stops the analysis. An analysis is many real MySQL runs and can sit
+	// for minutes on a container that will not start, so it has to be
+	// interruptible for the same reason a run does.
+	cancel context.CancelFunc `json:"-"`
 }
 
 // Jobs is a small in-memory registry of background analyses.
@@ -58,6 +63,20 @@ func (j *Jobs) put(job *Job) {
 		}
 	}
 	j.jobs[job.ID] = job
+}
+
+// Cancel stops a running analysis. It reports whether there was one to stop.
+func (j *Jobs) Cancel(id string) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	job, ok := j.jobs[id]
+	if !ok || job.Status != "running" {
+		return false
+	}
+	if job.cancel != nil {
+		job.cancel()
+	}
+	return true
 }
 
 // All returns every job, newest first.
@@ -219,13 +238,34 @@ var IsolationLevels = []string{
 }
 
 // DefaultVersions is the version sweep. 5.7 is included because it is still
-// widely deployed and its locking genuinely differs; 8.0 and 8.4 bracket the
-// current line.
-var DefaultVersions = []string{"mysql:5.7", "mysql:8.0", "mysql:8.4"}
+// widely deployed and predates NOWAIT and SKIP LOCKED entirely; 8.0 and 8.4 are
+// the LTS line most people run; 9.7 is the current innovation release, which is
+// where a behaviour change would show up first.
+var DefaultVersions = []string{"mysql:5.7", "mysql:8.0", "mysql:8.4", "mysql:9.7"}
 
 type IsolationMatrixInput struct {
 	ScenarioID string `json:"scenario_id,omitempty" jsonschema:"the scenario to sweep"`
 	YAML       string `json:"yaml,omitempty" jsonschema:"ad-hoc YAML instead of a saved scenario"`
+}
+
+// CancelJobInput names the analysis to stop.
+type CancelJobInput struct {
+	JobID string `json:"job_id" jsonschema:"the analysis to stop"`
+}
+
+type CancelJobOutput struct {
+	Cancelled bool   `json:"cancelled"`
+	Note      string `json:"note"`
+}
+
+// CancelJob stops a running analysis. Whatever it had finished is kept: a
+// partial matrix still says what those columns did.
+func (a *API) CancelJob(ctx context.Context, in CancelJobInput) (CancelJobOutput, error) {
+	if a.jobs.Cancel(in.JobID) {
+		return CancelJobOutput{Cancelled: true,
+			Note: "Stopping. Results from the columns that already ran are kept."}, nil
+	}
+	return CancelJobOutput{Note: "That analysis is not running; nothing to stop."}, nil
 }
 
 type JobStartedOutput struct {
@@ -325,7 +365,9 @@ func (a *API) runSweep(
 	axis, axisLabel string, values []string,
 	apply func(*casedef.Case, string),
 ) {
-	ctx := WithSource(context.Background(), SourceUI)
+	ctx, cancel := context.WithCancel(WithSource(context.Background(), SourceUI))
+	defer cancel()
+	a.jobs.update(job.ID, func(j *Job) { j.cancel = cancel })
 	res := &MatrixResult{
 		ScenarioID: base.ID, Name: base.Name,
 		Axis: axis, AxisLabel: axisLabel,
@@ -336,6 +378,9 @@ func (a *API) runSweep(
 	}
 
 	for i, value := range values {
+		if ctx.Err() != nil {
+			break
+		}
 		a.jobs.update(job.ID, func(j *Job) {
 			j.Progress = fmt.Sprintf("running %s (%d of %d)", value, i+1, len(values))
 		})
@@ -376,16 +421,24 @@ func (a *API) runSweep(
 		res.Columns = append(res.Columns, col)
 	}
 
+	aborted := ctx.Err() != nil
 	res.Summary = summariseMatrix(res)
 	a.jobs.update(job.ID, func(j *Job) {
 		j.Status = "done"
 		j.Progress = "finished"
+		if aborted {
+			j.Status = "cancelled"
+			j.Progress = fmt.Sprintf("%d of %d column(s) ran", len(res.Columns), len(values))
+		}
 		j.Ended = time.Now()
 		j.Matrix = res
 	})
-	a.note(ctx, Activity{
+	// The note is published on a fresh context: the job's own is cancelled by
+	// now, and the activity feed should still hear that it ended.
+	a.note(WithSource(context.Background(), SourceUI), Activity{
 		Kind: KindAnalysis, Tool: job.Kind, ScenarioID: base.ID,
-		Summary: axisLabel + " matrix finished: " + res.Summary,
+		Summary: axisLabel + " matrix " + map[bool]string{true: "aborted", false: "finished"}[aborted] +
+			": " + res.Summary,
 	})
 }
 
@@ -530,7 +583,10 @@ func (a *API) reproduces(ctx context.Context, c *casedef.Case, target string) (b
 }
 
 func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
-	ctx := WithSource(context.Background(), SourceUI)
+	ctx, cancel := context.WithCancel(WithSource(context.Background(), SourceUI))
+	defer cancel()
+	a.jobs.update(job.ID, func(j *Job) { j.cancel = cancel })
+
 	res := &ShrinkResult{ScenarioID: base.ID, Name: base.Name, Original: len(base.Steps)}
 
 	// Establish what the scenario does, so there is something to preserve.
@@ -582,9 +638,9 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 	// Greedy from the end: a later step is more likely to be incidental, and
 	// removing it keeps the earlier setup intact.
 	changed := true
-	for changed && attempts < maxAttempts {
+	for changed && attempts < maxAttempts && ctx.Err() == nil {
 		changed = false
-		for i := len(current.Steps) - 1; i >= 0 && attempts < maxAttempts; i-- {
+		for i := len(current.Steps) - 1; i >= 0 && attempts < maxAttempts && ctx.Err() == nil; i-- {
 			candidate := cloneCase(current)
 			candidate.Steps = append(append([]casedef.Step{}, current.Steps[:i]...), current.Steps[i+1:]...)
 			candidateKept := append(append([]int{}, kept[:i]...), kept[i+1:]...)
@@ -650,15 +706,22 @@ func (a *API) runShrink(job *Job, base *casedef.Case, target string) {
 	}
 	sort.Strings(res.RemovedLabels)
 
+	aborted := ctx.Err() != nil
 	a.jobs.update(job.ID, func(j *Job) {
 		j.Status = "done"
 		j.Progress = "finished"
+		if aborted {
+			// The reduction so far is still a real result: every step it dropped
+			// was verified to be unnecessary before it was dropped.
+			j.Status = "cancelled"
+			j.Progress = fmt.Sprintf("stopped after %d attempt(s)", attempts)
+		}
 		j.Ended = time.Now()
 		j.Shrink = res
 	})
-	a.note(ctx, Activity{
+	a.note(WithSource(context.Background(), SourceUI), Activity{
 		Kind: KindAnalysis, Tool: "shrink_scenario", ScenarioID: base.ID,
-		Summary: res.Note,
+		Summary: map[bool]string{true: "shrink aborted: ", false: ""}[aborted] + res.Note,
 	})
 }
 

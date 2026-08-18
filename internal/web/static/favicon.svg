@@ -1,8 +1,18 @@
+<!-- A padlock with a skull for a keyhole: a lock you do not get out of. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="8" fill="#0572ec"/>
-  <g fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
-    <path d="M10 6v5M10 21v5M22 6v5M22 21v5"/>
-  </g>
-  <circle cx="10" cy="16" r="3" fill="#fff"/>
-  <circle cx="22" cy="16" r="3" fill="#fff"/>
+
+  <!-- Shackle -->
+  <path d="M11 13v-2.5a5 5 0 0 1 10 0V13"
+        fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+
+  <!-- Body -->
+  <rect x="7.5" y="13" width="17" height="13" rx="3" fill="#fff"/>
+
+  <!-- Skull, cut out of the lock body so it reads at 16px too. -->
+  <path d="M16 15.4c-3 0-5 1.9-5 4.4 0 1.5.8 2.6 1.9 3.2v1.3c0 .4.3.7.7.7h4.8c.4 0 .7-.3.7-.7v-1.3c1.1-.6 1.9-1.7 1.9-3.2 0-2.5-2-4.4-5-4.4z"
+        fill="#0572ec"/>
+  <circle cx="14.1" cy="19.6" r="1.25" fill="#fff"/>
+  <circle cx="17.9" cy="19.6" r="1.25" fill="#fff"/>
+  <path d="M16 21.3l-.7 1.5h1.4z" fill="#fff"/>
 </svg>

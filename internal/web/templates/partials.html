@@ -19,9 +19,16 @@
 <aside class="sidebar">
   <a class="brand" href="/">
     <span class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <path d="M7 4v6M7 14v6M17 4v6M17 14v6"/>
-        <circle cx="7" cy="12" r="2"/><circle cx="17" cy="12" r="2"/>
+      <!-- A padlock with a skull for a keyhole: a lock you do not get out of. -->
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M8 10V7.5a4 4 0 0 1 8 0V10"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <rect x="4.5" y="10" width="15" height="11" rx="2.6" fill="currentColor"/>
+        <path d="M12 11.8c-2.6 0-4.4 1.7-4.4 3.9 0 1.3.7 2.3 1.7 2.8v1.1c0 .35.28.63.63.63h4.14c.35 0 .63-.28.63-.63v-1.1c1-.5 1.7-1.5 1.7-2.8 0-2.2-1.8-3.9-4.4-3.9z"
+              fill="var(--brand-mark-bg, #0572ec)"/>
+        <circle cx="10.35" cy="15.6" r="1.05" fill="currentColor"/>
+        <circle cx="13.65" cy="15.6" r="1.05" fill="currentColor"/>
+        <path d="M12 17.1l-.62 1.3h1.24z" fill="currentColor"/>
       </svg>
     </span>
     <span class="brand-text">

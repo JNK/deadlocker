@@ -105,7 +105,7 @@ func runCLI(args []string) error {
 		settle    = fs.Duration("settle", 400*time.Millisecond, "how long a statement may run before it is reported as blocked")
 		timeout   = fs.Duration("timeout", 5*time.Minute, "give up on a scenario after this long")
 		keepStale = fs.Bool("keep-stale", false, "do not remove containers left behind by a previous session")
-		noSeed    = fs.Bool("no-seed", false, "do not copy the built-in example scenarios into the case directory")
+		seed      = fs.Bool("seed", false, "copy the built-in example scenarios into the case directory first")
 	)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprint(os.Stderr, cliUsage)
@@ -121,7 +121,7 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !*noSeed {
+	if *seed {
 		if _, err := casedef.Seed(absCases); err != nil {
 			return err
 		}

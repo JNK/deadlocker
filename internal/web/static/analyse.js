@@ -24,9 +24,34 @@
     tick();
   }
 
-  function spinner(text) {
-    return '<div class="job-progress"><span class="job-spinner"></span><span>' +
-      esc(text || 'working…') + '</span></div>';
+  // showProgress paints the running state, updating the text in place rather
+  // than rebuilding the element.
+  //
+  // Replacing the node restarts its CSS animation, and with a poll every 1.2s
+  // the spinner visibly jerked back to the start rather than turning. A spinner
+  // that stutters says "stuck" — the exact opposite of what it is for.
+  function showProgress(host, text, jobID) {
+    var existing = host.querySelector('.job-progress');
+    if (!existing) {
+      host.innerHTML = '<div class="job-progress">' +
+        '<span class="job-spinner"></span>' +
+        '<span class="job-progress-text"></span>' +
+        '<button class="btn btn-sm btn-stop" type="button" data-abort hidden>Abort</button>' +
+        '</div>';
+      existing = host.querySelector('.job-progress');
+    }
+    existing.querySelector('.job-progress-text').textContent = text || 'working…';
+
+    var abort = existing.querySelector('[data-abort]');
+    abort.hidden = !jobID;
+    if (jobID && abort.dataset.job !== jobID) {
+      abort.dataset.job = jobID;
+      abort.addEventListener('click', function () {
+        abort.disabled = true;
+        abort.textContent = 'aborting…';
+        window.DL.postJSON('/api/job/' + encodeURIComponent(jobID) + '/cancel', {});
+      });
+    }
   }
 
   function cellClass(outcome) {
@@ -198,7 +223,12 @@
   if (page && page.dataset.job) {
     poll(page.dataset.job, function (job, err) {
       if (err) { page.innerHTML = '<div class="callout callout-danger">' + esc(err) + '</div>'; return; }
-      if (job.status === 'running') { page.innerHTML = spinner(job.progress); return; }
+      if (job.status === 'running') { showProgress(page, job.progress, job.id); return; }
+      if (job.status === 'cancelled') {
+        page.innerHTML = '<div class="callout callout-warn">Aborted. ' +
+          esc(job.progress || '') + '</div>';
+        return;
+      }
       if (job.status === 'failed') {
         page.innerHTML = '<div class="callout callout-danger">' + esc(job.error) + '</div>';
         return;
@@ -216,7 +246,7 @@
 
     btn.addEventListener('click', function () {
       btn.disabled = true;
-      host.innerHTML = spinner('starting…');
+      showProgress(host, 'starting…');
 
       window.DL.postJSON('/api/analyse/' + kind, { scenario_id: btn.dataset.scenario })
         .then(function (res) {
@@ -231,8 +261,13 @@
               btn.disabled = false;
               return;
             }
-            if (job.status === 'running') { host.innerHTML = spinner(job.progress); return; }
+            if (job.status === 'running') { showProgress(host, job.progress, job.id); return; }
             btn.disabled = false;
+            if (job.status === 'cancelled') {
+              host.innerHTML = '<div class="callout callout-warn">Aborted after ' +
+                esc(job.progress || 'starting') + '.</div>';
+              return;
+            }
             if (job.status === 'failed') {
               host.innerHTML = '<div class="callout callout-danger">' + esc(job.error) + '</div>';
               return;

@@ -137,6 +137,37 @@
     });
   });
 
+  // ------------------------------------------------- built-in scenarios
+  var biState = document.getElementById('builtins-state');
+  var biBtn = document.getElementById('builtins-import');
+  if (biState && biBtn) {
+    var paintBuiltIns = function () {
+      fetch('/api/builtins')
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (!res.ok) return;
+          biState.textContent = res.present + ' of ' + res.total + ' already in the library';
+          biBtn.disabled = res.missing === 0;
+          biBtn.textContent = res.missing === 0
+            ? 'All built-in scenarios are imported'
+            : 'Import ' + res.missing + ' built-in scenario' + (res.missing === 1 ? '' : 's');
+        })
+        .catch(function () { biState.textContent = ''; });
+    };
+    paintBuiltIns();
+
+    biBtn.addEventListener('click', function () {
+      biBtn.disabled = true;
+      window.DL.postJSON('/api/builtins', {}).then(function (res) {
+        if (!res.ok) { show('error', esc(res.error)); biBtn.disabled = false; return; }
+        paintBuiltIns();
+        show('ok', 'Imported ' + res.written + ' scenario(s)' +
+          (res.skipped ? ', ' + res.skipped + ' were already there' : '') +
+          '. <a href="/">Open the library</a>.');
+      });
+    });
+  }
+
   var copy = document.getElementById('copy-mcp');
   if (copy) {
     copy.addEventListener('click', function () {

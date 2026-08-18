@@ -72,7 +72,7 @@ func run() error {
 		settle    = flag.Duration("settle", 400*time.Millisecond, "how long a statement may run before it is reported as blocked")
 		prewarm   = flag.String("prewarm", "", "start this MySQL image at boot; overrides the setting in the UI")
 		keepStale = flag.Bool("keep-stale", false, "do not remove containers left behind by a previous run")
-		noSeed    = flag.Bool("no-seed", false, "do not copy the built-in example scenarios into the case directory")
+		seed      = flag.Bool("seed", false, "copy the built-in example scenarios into the case directory at startup")
 	)
 	flag.Parse()
 
@@ -80,19 +80,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// The example scenarios ship inside the binary, so an empty or missing
-	// directory is not an error: it gets populated. Existing files are never
-	// overwritten.
-	if !*noSeed {
+	// The built-in scenarios ship inside the binary but are no longer written
+	// out on startup. Filling someone's case directory with two dozen files
+	// they did not ask for is a decision, not a default — the library page
+	// offers the import while it is empty, and Settings offers it always.
+	if err := os.MkdirAll(absCases, 0o755); err != nil {
+		return fmt.Errorf("case directory %s: %w", absCases, err)
+	}
+	if *seed {
 		res, err := casedef.Seed(absCases)
 		if err != nil {
 			return err
 		}
-		if n := len(res.Written); n > 0 {
-			log.Printf("wrote %d built-in scenario(s) into %s", n, absCases)
-		}
-	} else if _, err := os.Stat(absCases); err != nil {
-		return fmt.Errorf("case directory %s: %w", absCases, err)
+		log.Printf("wrote %d built-in scenario(s) into %s", len(res.Written), absCases)
 	}
 
 	dbPath := *statePath

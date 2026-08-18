@@ -88,23 +88,128 @@
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
 
-    // Dropping a folder's worth of scenarios at once should work, and each is
-    // reported on its own: one bad file must not sink the rest.
-    var results = [];
+    // Read and inspect everything first, so the confirmation can say what is
+    // actually in the files. Nothing is written until it is accepted.
+    var texts = [];
     var chain = Promise.resolve();
     list.forEach(function (file) {
       chain = chain.then(function () {
         return readFile(file)
-          .then(function (text) { return window.DL.postJSON('/api/import', text, true); })
-          .then(function (res) {
-            results.push({ file: file.name, res: res });
+          .then(function (text) {
+            return window.DL.postJSON('/api/import/inspect', text, true)
+              .then(function (info) { texts.push({ file: file.name, text: text, info: info }); });
           })
           .catch(function (err) {
-            results.push({ file: file.name, res: { ok: false, error: String(err) } });
+            texts.push({ file: file.name, info: { ok: false, error: String(err) } });
           });
       });
     });
-    chain.then(function () { report(results); });
+
+    chain.then(function () {
+      return confirmImport(texts).then(function (go) {
+        if (!go) return;
+        return writeAll(texts.filter(function (t) { return t.info && t.info.ok; }));
+      });
+    });
+  }
+
+  // confirmImport shows what each file holds and waits for a decision.
+  function confirmImport(items) {
+    var good = items.filter(function (i) { return i.info && i.info.ok; });
+    var bad = items.filter(function (i) { return !i.info || !i.info.ok; });
+
+    var body = '';
+    good.forEach(function (i) {
+      var d = i.info;
+      var facts = [
+        d.steps + ' step' + (d.steps === 1 ? '' : 's'),
+        d.actors + ' actor' + (d.actors === 1 ? '' : 's')
+      ];
+      if (d.image) facts.push(d.image);
+      if (d.isolation) facts.push(d.isolation);
+      if (d.docs) facts.push(d.docs + ' doc link' + (d.docs === 1 ? '' : 's'));
+
+      // The counts that make a bundle different from a bare scenario.
+      var extras = [];
+      if (d.runs) extras.push(d.runs + ' recorded run' + (d.runs === 1 ? '' : 's'));
+      if (d.versions) extras.push(d.versions + ' version' + (d.versions === 1 ? '' : 's'));
+
+      body += '<div class="import-card">' +
+        '<div class="import-card-head">' +
+        '<span class="import-kind">' + esc(d.kind) + '</span>' +
+        '<strong>' + esc(d.name) + '</strong></div>' +
+        '<div class="import-facts">' + esc(facts.join(' · ')) + '</div>' +
+        (d.tags && d.tags.length
+          ? '<div class="import-tags">' + d.tags.map(function (t) {
+              return '<span class="tag">' + esc(t) + '</span>';
+            }).join('') + '</div>'
+          : '') +
+        (extras.length
+          ? '<div class="import-extras">carries ' + esc(extras.join(' and ')) +
+            ' — read for context, not written to the library</div>'
+          : '') +
+        (d.warnings && d.warnings.length
+          ? '<div class="import-warn">' + d.warnings.map(esc).join('<br>') + '</div>'
+          : '') +
+        '<div class="import-dest">will be written to <code>cases/' + esc(d.path) + '</code></div>' +
+        '</div>';
+    });
+
+    if (bad.length) {
+      body += '<ul class="import-list is-bad">' + bad.map(function (i) {
+        return '<li><strong>' + esc(i.file) + '</strong><span>' +
+          esc((i.info && i.info.error) || 'could not be read') + '</span></li>';
+      }).join('') + '</ul>';
+    }
+
+    if (!good.length) {
+      return window.DL.confirm({
+        title: 'Nothing here can be imported',
+        bodyHTML: body,
+        confirm: 'Close',
+        cancel: ''
+      }).then(function () { return false; });
+    }
+
+    return window.DL.confirm({
+      title: good.length === 1 ? 'Import this scenario?' : 'Import ' + good.length + ' scenarios?',
+      bodyHTML: body,
+      confirm: 'Import',
+      cancel: 'Cancel'
+    });
+  }
+
+  function writeAll(items) {
+    var results = [];
+    var chain = Promise.resolve();
+    items.forEach(function (i) {
+      chain = chain.then(function () {
+        return window.DL.postJSON('/api/import', i.text, true)
+          .then(function (res) { results.push({ file: i.file, res: res }); })
+          .catch(function (err) {
+            results.push({ file: i.file, res: { ok: false, error: String(err) } });
+          });
+      });
+    });
+    return chain.then(function () { report(results); });
+  }
+
+  // The empty library offers the built-ins directly; Settings owns it after
+  // that, so this button only exists while there is nothing to lose.
+  var emptyBtn = document.getElementById('builtins-import-empty');
+  if (emptyBtn) {
+    emptyBtn.addEventListener('click', function () {
+      emptyBtn.disabled = true;
+      emptyBtn.textContent = 'Importing…';
+      window.DL.postJSON('/api/builtins', {}).then(function (res) {
+        if (!res.ok) {
+          emptyBtn.disabled = false;
+          emptyBtn.textContent = 'Import the built-in scenarios';
+          return;
+        }
+        window.location.reload();
+      });
+    });
   }
 
   function readFile(file) {

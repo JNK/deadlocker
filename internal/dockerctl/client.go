@@ -145,18 +145,80 @@ func (c *Client) HasImage(ctx context.Context, image string) bool {
 	return true
 }
 
+// ImageArch reports an image's architecture, or "" if it cannot be read. It is
+// how the caller finds out that an image is going to run under emulation, which
+// changes how long everything takes.
+func (c *Client) ImageArch(ctx context.Context, image string) string {
+	resp, err := c.do(ctx, http.MethodGet, "/images/"+url.PathEscape(image)+"/json", nil, nil)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Architecture string `json:"Architecture"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return ""
+	}
+	return out.Architecture
+}
+
+// HostArch is the architecture Docker itself reports for this machine.
+func (c *Client) HostArch(ctx context.Context) string {
+	resp, err := c.do(ctx, http.MethodGet, "/version", nil, nil)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Arch string `json:"Arch"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return ""
+	}
+	return out.Arch
+}
+
 // PullImage pulls an image, reporting progress lines to onStatus. It is a no-op
 // when the image already exists locally.
 func (c *Client) PullImage(ctx context.Context, image string, onStatus func(string)) error {
 	if c.HasImage(ctx, image) {
 		return nil
 	}
+	err := c.pull(ctx, image, "", onStatus)
+	if err == nil || !isNoManifestErr(err) {
+		return err
+	}
+
+	// No image for this machine's architecture. Old MySQL tags are the common
+	// case: there is no arm64 build of mysql:5.7 at all, so on Apple Silicon
+	// every 5.7 scenario would simply fail to start. Docker can run the amd64
+	// build under emulation, which is slow but correct -- and a slow 5.7 run is
+	// worth much more than no 5.7 run.
+	if onStatus != nil {
+		onStatus("no image for this architecture; retrying as linux/amd64 (emulated)")
+	}
+	return c.pull(ctx, image, "linux/amd64", onStatus)
+}
+
+// isNoManifestErr reports whether a pull failed because the registry has no
+// build for the requested platform.
+func isNoManifestErr(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "no matching manifest") ||
+		strings.Contains(s, "no match for platform")
+}
+
+func (c *Client) pull(ctx context.Context, image, platform string, onStatus func(string)) error {
 	name, tag := image, "latest"
 	// Split on the last colon, but only if it is not part of a registry:port.
 	if i := strings.LastIndex(image, ":"); i > strings.LastIndex(image, "/") {
 		name, tag = image[:i], image[i+1:]
 	}
 	q := url.Values{"fromImage": {name}, "tag": {tag}}
+	if platform != "" {
+		q.Set("platform", platform)
+	}
 	resp, err := c.do(ctx, http.MethodPost, "/images/create", q, nil)
 	if err != nil {
 		return err

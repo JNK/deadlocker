@@ -40,6 +40,11 @@
       </div>
     </header>
 
+    <!-- Tags are the library's real taxonomy: a scenario is about gap locks and
+         insert intentions, not about the folder it happens to live in. Selecting
+         several narrows to scenarios carrying all of them. -->
+    <div class="tag-bar" id="tag-bar" hidden></div>
+
     <section class="card-grid" id="case-grid">
       <!-- Each category is a group so the filter can hide a heading whose cards
            have all gone. -->
@@ -50,6 +55,7 @@
         {{range .Cases}}
         <a class="case-card" href="/case/{{.ID}}" data-case
            data-origin="{{if .BuiltIn}}builtin{{else}}custom{{end}}"
+           data-tags="{{join .Tags ","}}"
            data-name="{{.Name}} {{join .Tags " "}}">
           <h3>{{.Name}}</h3>
           <p>{{firstLine .Description}}</p>
@@ -76,10 +82,23 @@
       </div>
 
       {{if not .Categories}}
+      <!-- Offered here only while the library is empty. Once there is work of
+           your own in it, filling it with two dozen more files is a decision
+           that belongs in Settings rather than on a button you might hit by
+           accident. -->
       <div class="empty-state">
         <h2>No scenarios yet</h2>
-        <p>Drop a YAML file into the <code>cases/</code> folder, or start from scratch in the playground.</p>
-        <a class="btn btn-primary" href="/playground">Open the playground</a>
+        <p>
+          Deadlocker ships with a library of worked examples — gap locks, deadlocks,
+          metadata locks, one per behaviour. They are not written to disk until you ask.
+        </p>
+        <div class="empty-actions">
+          <button class="btn btn-primary" id="builtins-import-empty" type="button">
+            Import the built-in scenarios
+          </button>
+          <a class="btn btn-ghost" href="/playground">Write one from scratch</a>
+        </div>
+        <p class="muted">Or drop a scenario file anywhere on this page to import it.</p>
       </div>
       {{end}}
     </section>

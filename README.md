@@ -100,7 +100,6 @@ Flags:
 | `-prewarm` | — | boot an image at startup instead of on first run, e.g. `mysql:8.4` |
 | `-keep-stale` | `false` | do not reap containers left by a previous session |
 | `-state` | `<cases>/../.deadlocker/state.db` | bbolt file holding the versioned configuration |
-| `-no-seed` | `false` | do not copy the built-in scenarios into the case directory |
 
 Everything is embedded in the binary — templates, CSS, JavaScript. There is no
 build step and no npm.
@@ -286,6 +285,13 @@ through by hand and a statement timing out while you read the explanation is the
 wrong lesson. Set it low deliberately when the timeout *is* the lesson.
 
 ## The scenario library
+
+The built-in scenarios are **not** written to disk on start. Filling a directory
+with two dozen files nobody asked for is a decision, not a default. The library
+page offers the import while it is empty; **Settings → Library** offers it
+always, and never overwrites a file that is already there. `deadlocker -seed`
+does the same for scripts.
+
 
 **Fundamentals** — record locks on an existing row · shared vs exclusive
 compatibility · why a lock wait timeout leaves the transaction open and holding
@@ -529,11 +535,17 @@ Three background analyses on every scenario's **Analyse** tab, also available as
 MCP tools (`isolation_matrix`, `version_matrix`, `shrink_scenario`, polled with
 `get_job`).
 
-The **version matrix** runs the scenario against MySQL 5.7, 8.0 and 8.4.
+The **version matrix** runs the scenario against MySQL 5.7, 8.0, 8.4 and 9.7.
 Locking is not fixed across releases — 5.7 predates `NOWAIT` and `SKIP LOCKED`
 entirely — so this answers "does this still hold on the version we actually
-run". A column that could not run says so rather than counting as agreement,
-which matters on Apple Silicon where there is no `mysql:5.7` image.
+run". A column that could not run says so rather than counting as agreement.
+
+There is no arm64 `mysql:5.7` image; on Apple Silicon it is pulled as amd64 and
+run under emulation, which costs about ten seconds of extra startup.
+
+Any analysis can be aborted while it runs. Whatever finished is kept: a partial
+matrix still says what those columns did, and a partial reduction has still
+verified every step it dropped.
 
 **Isolation matrix** runs the scenario once at each of the four isolation
 levels and reports where the outcomes diverge — answering "what would READ

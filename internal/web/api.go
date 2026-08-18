@@ -221,6 +221,18 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": saved.Version})
 }
 
+// handleCancelJob stops a running analysis.
+func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	out, err := s.api.CancelJob(r.Context(), agentapi.CancelJobInput{JobID: r.PathValue("id")})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "cancelled": out.Cancelled, "note": out.Note,
+	})
+}
+
 // ------------------------------------------------------------- run log
 
 // handleForgetRun removes one run from the log. A run still open is closed
@@ -266,6 +278,43 @@ func (s *Server) handleClearRuns(w http.ResponseWriter, r *http.Request) {
 		Summary: fmt.Sprintf("cleared %d run(s) from the log", n),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n, "kept": len(live)})
+}
+
+// handleSeedBuiltIns writes the scenarios that ship with the binary into the
+// case directory.
+//
+// This is a deliberate action rather than something that happens on first
+// start: two dozen files appearing in a directory nobody asked to have filled
+// is a decision the user should make. Existing files are never overwritten, so
+// running it twice is safe and the second time reports nothing written.
+func (s *Server) handleSeedBuiltIns(w http.ResponseWriter, r *http.Request) {
+	res, err := casedef.Seed(s.lib.Root)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := s.lib.Load(); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if len(res.Written) > 0 {
+		s.api.Hub().Publish(agentapi.Activity{
+			Source: agentapi.SourceUI, Kind: agentapi.KindScenarioCreated,
+			Summary: fmt.Sprintf("imported %d built-in scenario(s)", len(res.Written)),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "written": len(res.Written), "skipped": res.Skipped,
+	})
+}
+
+// handleBuiltInCount reports how many built-in scenarios exist and how many are
+// already on disk, so the offer to import them can say what it will do.
+func (s *Server) handleBuiltInCount(w http.ResponseWriter, r *http.Request) {
+	total, present := casedef.BuiltInStatus(s.lib.Root)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "total": total, "present": present, "missing": total - present,
+	})
 }
 
 // -------------------------------------------------- scenario import/export
@@ -332,6 +381,55 @@ func (s *Server) handleExportScenario(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(bundle)
+}
+
+// handleInspectImport reports what a file contains without writing anything.
+//
+// Dropping a file is a one-gesture action with no undo, and a bundle can carry
+// a scenario plus dozens of runs and versions. Saying what is in it — and what
+// it will be called — before anything touches disk is the difference between a
+// gesture and a decision.
+func (s *Server) handleInspectImport(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	kind := "scenario"
+	var bundle scenarioBundle
+	trimmed := strings.TrimSpace(string(body))
+	if strings.HasPrefix(trimmed, "{") {
+		kind = "bundle"
+	}
+
+	yamlSrc, err := unwrapImport(body)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if kind == "bundle" {
+		_ = json.Unmarshal([]byte(trimmed), &bundle)
+	}
+
+	parsed, err := casedef.Parse([]byte(yamlSrc))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "error": "that file is not a valid scenario: " + err.Error()})
+		return
+	}
+
+	path := s.freePath(parsed)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "kind": kind,
+		"name": parsed.Name, "path": path,
+		"actors": len(parsed.Actors), "steps": len(parsed.Steps),
+		"tags": parsed.Tags, "docs": len(parsed.Docs),
+		"image": parsed.MySQL.Image, "isolation": parsed.MySQL.Isolation,
+		"runs": len(bundle.Runs), "versions": len(bundle.Versions),
+		"exported_at": bundle.Exported,
+		"warnings":    agentapi.LintCase(parsed),
+	})
 }
 
 // handleImportScenario accepts either a bare scenario YAML or a bundle, and
@@ -787,9 +885,10 @@ func (s *Server) handleChatPrompts(w http.ResponseWriter, r *http.Request) {
 // browser polls.
 func (s *Server) handleAnalyse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ScenarioID string `json:"scenario_id"`
-		YAML       string `json:"yaml"`
-		Target     string `json:"target"`
+		ScenarioID string   `json:"scenario_id"`
+		YAML       string   `json:"yaml"`
+		Target     string   `json:"target"`
+		Images     []string `json:"images,omitempty"`
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
 
@@ -805,7 +904,7 @@ func (s *Server) handleAnalyse(w http.ResponseWriter, r *http.Request) {
 		})
 	case "version":
 		out, err = s.api.StartVersionMatrix(ctx, agentapi.VersionMatrixInput{
-			ScenarioID: req.ScenarioID, YAML: req.YAML,
+			ScenarioID: req.ScenarioID, YAML: req.YAML, Images: req.Images,
 		})
 	case "shrink":
 		out, err = s.api.StartShrink(ctx, agentapi.ShrinkInput{

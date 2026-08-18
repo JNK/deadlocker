@@ -194,6 +194,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/analysis/{id}/apply", s.handleApplyShrink)
 	mux.HandleFunc("POST /api/analyse/{kind}", s.handleAnalyse)
 	mux.HandleFunc("GET /api/job/{id}", s.handleJob)
+	mux.HandleFunc("POST /api/job/{id}/cancel", s.handleCancelJob)
 	mux.HandleFunc("GET /playground", s.handlePlayground)
 	mux.HandleFunc("POST /playground/validate", s.handleValidate)
 	mux.HandleFunc("POST /playground/save", s.handleSave)
@@ -219,7 +220,10 @@ func (s *Server) Routes() http.Handler {
 	// Sharing a scenario: out as YAML or as a bundle with its runs, in from a
 	// file dropped anywhere on the library page.
 	mux.HandleFunc("GET /api/case/{id}/export", s.handleExportScenario)
+	mux.HandleFunc("POST /api/import/inspect", s.handleInspectImport)
 	mux.HandleFunc("POST /api/import", s.handleImportScenario)
+	mux.HandleFunc("GET /api/builtins", s.handleBuiltInCount)
+	mux.HandleFunc("POST /api/builtins", s.handleSeedBuiltIns)
 
 	// Scenario history. Every save is recorded, so an edit that turns out to be
 	// wrong is one click away from being undone.
@@ -457,7 +461,10 @@ func (s *Server) base(title, nav string) *pageData {
 		}
 		pd.Runs = append(pd.Runs, historyEntry{
 			RunID: rec.RunID, CaseID: rec.CaseID, CaseName: rec.CaseName,
-			Status: rec.Status, Outcome: rec.Outcome,
+			// A run in the history is over, whatever state it was in when it
+			// was recorded. Carrying "ready" or "finished" here gave a closed
+			// run a live-looking dot; how it ended is the outcome's job.
+			Status: "closed", Outcome: rec.Outcome,
 			Cursor: rec.Submitted, Total: len(rec.Steps), StartedAt: rec.StartedAt,
 		})
 		if len(pd.Runs) >= sidebarRunLimit {

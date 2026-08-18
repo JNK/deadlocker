@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,11 @@ const (
 
 // serverArgs are passed to mysqld. They tune the server for fast startup and
 // for making lock behaviour observable rather than for realistic performance.
+//
+// Every flag here has to exist in every server the version matrix sweeps.
+// mysqld rejects an unknown variable by aborting at startup, so one 8.0-only
+// flag makes a 5.7 container exit immediately — which surfaces two minutes
+// later as a connection timeout rather than as the one-line answer it is.
 var serverArgs = []string{
 	// Deadlock reports land in the error log, which we surface as docker logs.
 	"--innodb-print-all-deadlocks=ON",
@@ -47,10 +53,42 @@ var serverArgs = []string{
 	// Small footprint so the data directory fits comfortably in tmpfs and
 	// initialisation stays quick.
 	"--innodb-buffer-pool-size=64M",
-	"--innodb-redo-log-capacity=16777216",
 	// The error log deliberately stays at the image default, which is stderr.
 	// Pointing --log-error at /dev/stderr does not work: mysqld appends ".err"
 	// to the value and then fails to open /dev/stderr.err.
+}
+
+// serverArgsFor returns the arguments for one image, adding the flags that
+// only newer servers understand.
+func serverArgsFor(image string) []string {
+	args := append([]string(nil), serverArgs...)
+	if atLeast(image, 8, 0) {
+		// Renamed from innodb_log_file_size in 8.0.30. 5.7 aborts on it.
+		args = append(args, "--innodb-redo-log-capacity=16777216")
+	} else {
+		args = append(args, "--innodb-log-file-size=16M")
+	}
+	return args
+}
+
+// atLeast reports whether an image tag names a MySQL at or above major.minor.
+// An unparseable tag is treated as current, since that is what "mysql:latest"
+// and any bare image name mean in practice.
+func atLeast(image string, major, minor int) bool {
+	tag := ""
+	if i := strings.LastIndex(image, ":"); i > strings.LastIndex(image, "/") {
+		tag = image[i+1:]
+	}
+	parts := strings.SplitN(tag, ".", 3)
+	if len(parts) < 2 {
+		return true
+	}
+	maj, err1 := strconv.Atoi(parts[0])
+	min, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return maj > major || (maj == major && min >= minor)
 }
 
 // Box is a running MySQL container plus the proxy-free admin connection used
@@ -201,6 +239,14 @@ func (p *Pool) Get(ctx context.Context, image string, onProgress func(string)) (
 	}
 }
 
+// emulated reports whether the image's architecture differs from the host's, in
+// which case Docker is translating every instruction.
+func (p *Pool) emulated(ctx context.Context, image string) bool {
+	imageArch := p.docker.ImageArch(ctx, image)
+	hostArch := p.docker.HostArch(ctx)
+	return imageArch != "" && hostArch != "" && imageArch != hostArch
+}
+
 func (p *Pool) start(ctx context.Context, image string, onProgress func(string)) (*Box, error) {
 	progress := func(format string, args ...any) {
 		if onProgress != nil {
@@ -216,7 +262,7 @@ func (p *Pool) start(ctx context.Context, image string, onProgress func(string))
 	progress("creating container")
 	id, err := p.docker.CreateContainer(ctx, dockerctl.CreateConfig{
 		Image: image,
-		Cmd:   serverArgs,
+		Cmd:   serverArgsFor(image),
 		Env: []string{
 			"MYSQL_ROOT_PASSWORD=" + RootPassword,
 			// Allow root from any host: the proxy connects from the host
@@ -263,8 +309,31 @@ func (p *Pool) start(ctx context.Context, image string, onProgress func(string))
 		}()
 	}
 
+	// An image running under emulation initialises several times slower: an
+	// emulated MySQL 5.7 first boot regularly exceeds two minutes, which read as
+	// "5.7 never runs" rather than "5.7 is slow here".
+	ready := 120 * time.Second
+	if p.emulated(ctx, image) {
+		// Emulation is slower, though far less than it sounds: an emulated 5.7
+		// is ready in about ten seconds. A dead container is now detected
+		// directly, so this budget only has to cover a genuinely slow start.
+		ready = 4 * time.Minute
+		progress("%s runs under emulation on this machine; allowing %s to start", image, ready)
+	}
+
 	progress("waiting for mysqld on %s", box.Addr())
-	db, err := waitReady(ctx, box, 120*time.Second, progress)
+	db, err := waitReady(ctx, box, ready, progress, func() error {
+		// A container that has exited is never going to answer, and the reason
+		// is already in its log. Waiting out the full timeout to report "dial
+		// tcp: connection refused" hides a one-line answer for minutes —
+		// which is exactly what an unsupported mysqld flag looked like.
+		ins, insErr := p.docker.Inspect(ctx, id)
+		if insErr != nil || ins.State.Running {
+			return nil
+		}
+		return fmt.Errorf("the container exited before mysqld was ready (%s)%s",
+			ins.State.Status, lastErrorLines(ctx, p.docker, id))
+	})
 	if err != nil {
 		_ = p.docker.RemoveContainer(context.Background(), id)
 		return nil, err
@@ -274,7 +343,40 @@ func (p *Pool) start(ctx context.Context, image string, onProgress func(string))
 	return box, nil
 }
 
-func waitReady(ctx context.Context, box *Box, timeout time.Duration, progress func(string, ...any)) (*sql.DB, error) {
+// lastErrorLines pulls the tail of a dead container's log, so the reason it
+// died travels with the error rather than only reaching the container log tab.
+func lastErrorLines(ctx context.Context, docker *dockerctl.Client, id string) string {
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var lines []string
+	_ = docker.StreamLogs(readCtx, id, time.Time{}, func(l dockerctl.LogLine) {
+		t := strings.TrimSpace(l.Text)
+		if t == "" {
+			return
+		}
+		low := strings.ToLower(t)
+		if strings.Contains(low, "error") || strings.Contains(low, "unknown variable") ||
+			strings.Contains(low, "aborting") {
+			lines = append(lines, t)
+		}
+	})
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+	return ": " + strings.Join(lines, " / ")
+}
+
+// waitReady polls until mysqld answers. checkAlive, when it returns an error,
+// ends the wait early: there is no point waiting out a timeout for a process
+// that is gone.
+func waitReady(
+	ctx context.Context, box *Box, timeout time.Duration,
+	progress func(string, ...any), checkAlive func() error,
+) (*sql.DB, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	attempt := 0
@@ -298,6 +400,13 @@ func waitReady(ctx context.Context, box *Box, timeout time.Duration, progress fu
 			}
 			lastErr = err
 			_ = db.Close()
+		}
+		// Checked every couple of seconds rather than every attempt: an inspect
+		// per 500ms would be noise against the Docker socket.
+		if attempt%4 == 0 && checkAlive != nil {
+			if dead := checkAlive(); dead != nil {
+				return nil, dead
+			}
 		}
 		if attempt%10 == 0 {
 			progress("still waiting for mysqld (%v)", compactErr(lastErr))

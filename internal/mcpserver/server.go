@@ -185,6 +185,11 @@ func registerTools(srv *mcp.Server, api *agentapi.API) {
 			"many real MySQL runs, so they take tens of seconds.",
 		api.GetJob)
 
+	tool(srv, "cancel_job", "Stop an analysis",
+		"Stop a running isolation_matrix, version_matrix or shrink_scenario. Results from "+
+			"the parts that already finished are kept.",
+		api.CancelJob)
+
 	tool(srv, "compare_runs", "Compare two runs",
 		"Diff two recorded runs step by step, reporting only what actually differed.",
 		api.CompareRuns)

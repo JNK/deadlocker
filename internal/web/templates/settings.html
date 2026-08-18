@@ -4,7 +4,7 @@
 <body>
 <div class="shell">
   {{template "sidebar" .}}
-  <main class="main">
+  <main class="main main-tabbed">
     <header class="page-header page-header-sticky">
       <div class="page-header-main">
         <h1>Settings</h1>
@@ -16,11 +16,22 @@
       <div class="page-actions">
         <button class="btn btn-primary" id="cfg-save" type="button">Save</button>
       </div>
+      <!-- One card per tab: the page had grown to four unrelated subjects
+           stacked in two columns, and the one you wanted was never the one on
+           screen. -->
+      <nav class="tabs" data-tabs="settings">
+        <button class="tab is-active" data-tab="assistant" type="button">Assistant</button>
+        <button class="tab" data-tab="mysql" type="button">MySQL</button>
+        <button class="tab" data-tab="library" type="button">Library</button>
+        <button class="tab" data-tab="mcp" type="button">MCP</button>
+        <button class="tab" data-tab="history" type="button">History</button>
+      </nav>
     </header>
 
     <div class="pg-status" id="cfg-status" hidden></div>
 
-    <section class="two-col">
+    <div class="tab-panels" data-panels="settings">
+      <section class="tab-panel is-active" data-panel="assistant">
       <div class="panel">
         <div class="panel-head"><h2>Assistant</h2></div>
         <div class="panel-body">
@@ -140,8 +151,9 @@
           </details>
         </div>
       </div>
+      </section>
 
-      <div>
+      <section class="tab-panel" data-panel="mysql">
         <div class="panel">
           <div class="panel-head"><h2>MySQL container</h2></div>
           <div class="panel-body">
@@ -168,7 +180,25 @@
             <small class="muted">Takes effect on the next start.</small>
           </div>
         </div>
+      </section>
 
+      <section class="tab-panel" data-panel="library">
+        <div class="panel">
+          <div class="panel-head"><h2>Built-in scenarios</h2></div>
+          <div class="panel-body">
+            <p class="muted" style="margin-top:0">
+              The scenarios that ship with Deadlocker are not written to disk on start —
+              filling a directory with files nobody asked for is a decision, not a default.
+              Import them here whenever you want them. Existing files are never overwritten,
+              so this is safe to run again: it only adds what is missing.
+            </p>
+            <p id="builtins-state" class="muted mono">checking…</p>
+            <button class="btn btn-primary" id="builtins-import" type="button">Import built-in scenarios</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="mcp">
         <div class="panel">
           <div class="panel-head"><h2>MCP endpoint</h2></div>
           <div class="panel-body">
@@ -192,6 +222,9 @@
           </div>
         </div>
 
+      </section>
+
+      <section class="tab-panel" data-panel="history">
         <div class="panel">
           <div class="panel-head">
             <h2>Configuration history</h2>
@@ -224,8 +257,8 @@
             </p>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </div>
   </main>
 </div>
 <script src="/static/app.js"></script>

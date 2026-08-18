@@ -208,6 +208,10 @@ func (a *API) ValidateScenario(ctx context.Context, in ValidateScenarioInput) (V
 	return ValidateScenarioOutput{Valid: true, Scenario: &s, Warnings: lintCase(c)}, nil
 }
 
+// LintCase is lintCase for callers outside this package -- the import preview
+// wants to warn before writing, not after.
+func LintCase(c *casedef.Case) []string { return lintCase(c) }
+
 // lintCase catches the mistakes that produce a valid file which nonetheless
 // wedges when you step through it.
 func lintCase(c *casedef.Case) []string {

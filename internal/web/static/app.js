@@ -22,6 +22,14 @@
     });
   }
 
+  // esc is defined here rather than taken from window.DL, which this file only
+  // populates further down.
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   // ------------------------------------------------------- library filter
   // Two filters that compose: free text, and origin. A card has to satisfy both
   // to stay, and a category whose cards have all gone goes with them.
@@ -36,11 +44,15 @@
     if (['all', 'builtin', 'custom'].indexOf(origin) === -1) origin = 'all';
     if (filter && params.get('q')) filter.value = params.get('q');
 
+    // Several tags at once, and they compose: a card has to carry all of them.
+    var tags = (params.get('tags') || '').split(',').filter(Boolean);
+
     var syncURL = function () {
       var next = new URLSearchParams(window.location.search);
       var q = filter ? filter.value.trim() : '';
       if (q) next.set('q', q); else next.delete('q');
       if (origin !== 'all') next.set('origin', origin); else next.delete('origin');
+      if (tags.length) next.set('tags', tags.join(',')); else next.delete('tags');
       var qs = next.toString();
       history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
     };
@@ -51,7 +63,9 @@
         var hay = (el.dataset.name || el.textContent || '').toLowerCase();
         var textOK = q === '' || hay.indexOf(q) !== -1;
         var originOK = origin === 'all' || el.dataset.origin === origin;
-        el.classList.toggle('is-hidden', !(textOK && originOK));
+        var cardTags = (el.dataset.tags || '').split(',');
+        var tagsOK = tags.every(function (t) { return cardTags.indexOf(t) !== -1; });
+        el.classList.toggle('is-hidden', !(textOK && originOK && tagsOK));
       });
       document.querySelectorAll('[data-group]').forEach(function (group) {
         var anyVisible = Array.prototype.some.call(
@@ -81,6 +95,52 @@
       });
     })();
 
+    // ------------------------------------------------------------ tag bar
+    var tagBar = document.getElementById('tag-bar');
+
+    var buildTagBar = function () {
+      if (!tagBar) return;
+      var counts = {};
+      document.querySelectorAll('[data-case]').forEach(function (el) {
+        (el.dataset.tags || '').split(',').filter(Boolean).forEach(function (t) {
+          counts[t] = (counts[t] || 0) + 1;
+        });
+      });
+      var names = Object.keys(counts).sort(function (a, b) {
+        // Commonest first: the tags that actually divide the library are the
+        // ones worth offering, and an alphabetical list buries them.
+        return counts[b] - counts[a] || a.localeCompare(b);
+      });
+      if (!names.length) return;
+
+      tagBar.hidden = false;
+      tagBar.innerHTML = names.map(function (t) {
+        return '<button class="tag-toggle" type="button" data-tag="' + esc(t) + '">' +
+          esc(t) + '<span class="tag-toggle-count">' + counts[t] + '</span></button>';
+      }).join('') +
+        '<button class="tag-clear" type="button" data-tag-clear hidden>clear</button>';
+
+      tagBar.addEventListener('click', function (e) {
+        if (e.target.closest('[data-tag-clear]')) { tags = []; paintTags(); apply(); return; }
+        var btn = e.target.closest('[data-tag]');
+        if (!btn) return;
+        var t = btn.dataset.tag;
+        var at = tags.indexOf(t);
+        if (at >= 0) tags.splice(at, 1); else tags.push(t);
+        paintTags();
+        apply();
+      });
+    };
+
+    var paintTags = function () {
+      if (!tagBar) return;
+      tagBar.querySelectorAll('[data-tag]').forEach(function (b) {
+        b.classList.toggle('is-on', tags.indexOf(b.dataset.tag) >= 0);
+      });
+      var clear = tagBar.querySelector('[data-tag-clear]');
+      if (clear) clear.hidden = tags.length === 0;
+    };
+
     var paintOrigin = function () {
       originBtns.forEach(function (b) {
         b.classList.toggle('is-active', b.dataset.origin === origin);
@@ -94,6 +154,8 @@
       });
     });
     paintOrigin();
+    buildTagBar();
+    paintTags();
 
     // Restore whatever the URL asked for before anything is drawn.
     apply();
