@@ -1,0 +1,124 @@
+name: ROLLBACK TO SAVEPOINT gives back the locks taken after it
+category: Fundamentals
+tags: [savepoint, partial-rollback, record-lock]
+docs:
+  - title: SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT
+    url: https://dev.mysql.com/doc/refman/8.4/en/savepoint.html
+    note: "\"InnoDB releases row locks set after the savepoint.\""
+
+description: |
+  A savepoint is a partial undo point inside a transaction. What is less widely
+  known is that it undoes **locks** as well as rows: rolling back to a savepoint
+  releases the row locks acquired after it, while everything taken before stays
+  held.
+
+  That makes it the only way to narrow a transaction's lock footprint without
+  ending the transaction. A long transaction that speculatively locked something
+  it turned out not to need can hand it back.
+
+  This scenario proves it rather than asserting it. Session A locks row 1,
+  marks a savepoint, then locks row 2. Session B tries row 2 and blocks. A rolls
+  back to the savepoint — without committing — and B goes through, while row 1
+  stays locked and a second attempt on it still blocks.
+
+  The caveat worth knowing: this is about row locks. Gap locks and the
+  transaction's snapshot are not restored, and the transaction is still open and
+  still holding everything from before the savepoint.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE items (
+      id    INT NOT NULL,
+      label VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO items (id, label) VALUES (1, 'first'), (2, 'second')
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+  - id: c
+    name: Session C
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock row 1
+    sql: SELECT * FROM items WHERE id = 1 FOR UPDATE
+    note: Taken before the savepoint, so it will survive the rollback.
+    expect: ok
+
+  - actor: a
+    label: Mark a savepoint
+    sql: SAVEPOINT before_speculation
+    expect: ok
+
+  - actor: a
+    label: Lock row 2 as well
+    sql: SELECT * FROM items WHERE id = 2 FOR UPDATE
+    note: Taken after the savepoint. This is the one that should come back.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Try to take row 2
+    sql: SELECT * FROM items WHERE id = 2 FOR UPDATE
+    note: Blocks, as it must — A holds it.
+    expect: blocks
+
+  - actor: a
+    label: Roll back to the savepoint
+    sql: ROLLBACK TO SAVEPOINT before_speculation
+    note: >-
+      A's transaction is still open. The lock on row 2 is released and B is
+      granted immediately; the lock on row 1 is not.
+    expect: ok
+
+  - actor: c
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: c
+    label: Try to take row 1
+    sql: SELECT * FROM items WHERE id = 1 FOR UPDATE
+    note: >-
+      Blocks. Row 1 was locked before the savepoint, so rolling back to it
+      changed nothing here.
+    expect: blocks
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Commit, releasing row 1 at last
+    sql: COMMIT
+    note: Session C is granted only now.
+    expect: ok
+
+  - actor: c
+    label: Commit
+    sql: COMMIT
+    expect: ok

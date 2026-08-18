@@ -1,0 +1,122 @@
+name: A transaction reads 100, writes it, and gets 210
+category: Isolation levels
+tags: [repeatable-read, mvcc, consistent-read, current-read, lost-update]
+docs:
+  - title: Consistent nonlocking reads
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-consistent-read.html
+    note: Where the snapshot comes from, and what ignores it.
+  - title: Locking reads
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html
+
+description: |
+  The most surprising thing REPEATABLE READ does, and it is not a bug.
+
+  A plain `SELECT` is a **consistent read**: it answers from the snapshot taken
+  at the transaction's first read, so it keeps showing you the world as it was.
+  That is the whole point of the isolation level.
+
+  But `UPDATE`, `DELETE` and `SELECT … FOR UPDATE` are **current reads**. They
+  cannot use the snapshot, because you cannot lock a row that no longer exists
+  in that form — so they read the latest committed version instead.
+
+  Both happen in the same transaction, and they disagree:
+
+  1. Session A reads the balance: **100**.
+  2. Session B sets it to 200 and commits.
+  3. Session A reads again: still **100**. Repeatable, as promised.
+  4. Session A runs `balance = balance + 10`. It operates on **200**, not 100.
+  5. Session A reads a third time: **210**. A transaction always sees its own
+     writes, so the snapshot is now overridden for this row.
+
+  Read 100, added 10, got 210. Nothing is broken; two different read modes were
+  used and only one of them honours the snapshot.
+
+  The practical consequence: **do not compute a new value in your application
+  from a plain SELECT**. Either write it relative to the current value in SQL —
+  which is what step 6 does, and what makes the arithmetic correct even though
+  it is surprising — or take the lock up front with `FOR UPDATE`, which makes
+  step 3 block and removes the disagreement entirely.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE accounts (
+      id      INT NOT NULL,
+      balance BIGINT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO accounts (id, balance) VALUES (1, 100)
+
+actors:
+  - id: a
+    name: Reader then writer
+    accent: blue
+  - id: b
+    name: Someone else
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Read the balance — this fixes the snapshot
+    sql: SELECT balance FROM accounts WHERE id = 1
+    note: >-
+      Returns 100. This is the read that establishes the transaction's view;
+      everything consistent from here on answers from it.
+    expect: ok
+
+  - actor: b
+    label: Someone else sets it to 200 and commits
+    sql: UPDATE accounts SET balance = 200 WHERE id = 1
+    note: A separate transaction, committed immediately by autocommit.
+    expect: ok
+
+  - actor: a
+    label: Read it again
+    sql: SELECT balance FROM accounts WHERE id = 1
+    note: >-
+      Still 100. This is REPEATABLE READ doing exactly what it says — the same
+      query in the same transaction gives the same answer.
+    expect: ok
+
+  - actor: a
+    label: Read it again, but for update
+    sql: SELECT balance FROM accounts WHERE id = 1 FOR UPDATE
+    note: >-
+      200. A locking read is a current read: it has to see the row it is
+      locking. Two reads of one row, one transaction, two answers.
+    expect: ok
+
+  - actor: a
+    label: Add ten to the balance
+    sql: UPDATE accounts SET balance = balance + 10 WHERE id = 1
+    note: >-
+      Also a current read, so `balance` here is 200. The row becomes 210 —
+      not 110, which is what the snapshot would have given.
+    expect: ok
+
+  - actor: a
+    label: Read one last time
+    sql: SELECT balance FROM accounts WHERE id = 1
+    note: >-
+      210. The snapshot no longer applies to this row: a transaction always
+      sees its own writes.
+    expect: ok
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    note: >-
+      Try the same scenario with FOR UPDATE as the very first read: step 3
+      blocks instead, and no disagreement can arise.
+    expect: ok

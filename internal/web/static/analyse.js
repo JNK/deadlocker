@@ -51,11 +51,11 @@
     if (!m) { host.innerHTML = ''; return; }
     var html = '<p class="callout callout-accent">' + esc(m.summary) + '</p>';
     html += '<div class="table-wrap"><table class="matrix-table"><thead><tr><th>Step</th>';
-    m.columns.forEach(function (c) { html += '<th>' + esc(c.isolation) + '</th>'; });
+    m.columns.forEach(function (c) { html += '<th>' + esc(c.label || c.isolation) + '</th>'; });
     html += '</tr></thead><tbody>';
 
     (m.step_labels || []).forEach(function (label, i) {
-      // Highlight the rows where the isolation level actually changes something.
+      // Highlight the rows where the swept axis actually changes something.
       var seen = {};
       m.columns.forEach(function (c) {
         if (c.cells && c.cells[i]) seen[c.cells[i].outcome] = true;
@@ -189,7 +189,7 @@
   // --------------------------------------------------------------- wiring
 
   function render(host, job, jobID) {
-    if (job.kind === 'isolation-matrix') renderMatrix(host, job.matrix, jobID);
+    if (job.kind === 'isolation-matrix' || job.kind === 'version-matrix') renderMatrix(host, job.matrix, jobID);
     else renderShrink(host, job.shrink, jobID);
   }
 
@@ -210,7 +210,8 @@
   // The Analyse tab on a scenario.
   document.querySelectorAll('[data-analyse]').forEach(function (btn) {
     var kind = btn.dataset.analyse;
-    var host = document.getElementById(kind === 'isolation' ? 'matrix-out' : 'shrink-out');
+    var host = document.getElementById(kind + '-out') ||
+      document.getElementById(kind === 'isolation' ? 'matrix-out' : 'shrink-out');
     if (!host) return;
 
     btn.addEventListener('click', function () {

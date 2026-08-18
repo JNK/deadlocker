@@ -17,6 +17,7 @@
     run: JSON.parse(document.getElementById('run-bootstrap').textContent),
     steps: JSON.parse(document.getElementById('steps-bootstrap').textContent) || [],
     locks: null,
+    lockDelta: null,
     wire: [],
     docker: [],
     activity: [],
@@ -387,6 +388,73 @@
     return found;
   }
 
+  // ------------------------------------------------------------ lock diff
+  //
+  // A snapshot answers "what is held now". The question a reader actually has
+  // while stepping is "what did that statement just do", and answering it from
+  // two tables side by side is work the machine should do.
+  //
+  // Locks are identified by actor, table, index, mode and key rather than by
+  // lock_id, which is not stable across snapshots.
+  function lockKey(l) {
+    return [l.actor, l.table, l.index, l.lock_mode, l.lock_data].join('\u0001');
+  }
+
+  function diffLocks(before, after) {
+    var was = {}, now = {};
+    (before && before.locks || []).forEach(function (l) { was[lockKey(l)] = l; });
+    (after && after.locks || []).forEach(function (l) { now[lockKey(l)] = l; });
+
+    var added = [], released = [], changed = [];
+    Object.keys(now).forEach(function (k) {
+      if (!was[k]) added.push(now[k]);
+      else if (was[k].lock_status !== now[k].lock_status) {
+        changed.push({ from: was[k], to: now[k] });
+      }
+    });
+    Object.keys(was).forEach(function (k) {
+      if (!now[k]) released.push(was[k]);
+    });
+    return { added: added, released: released, changed: changed };
+  }
+
+  function lockLine(l) {
+    return '<span class="lock-mode ' + lockModeClass(l) + '">' + esc(l.lock_mode) + '</span> ' +
+      esc(actorName(l.actor)) + ' on <code>' + esc(l.table) +
+      (l.index ? '.' + esc(l.index) : '') + '</code>' +
+      (l.lock_data && l.lock_data !== '—' ? ' at <code>' + esc(l.lock_data) + '</code>' : '');
+  }
+
+  function renderLockDelta() {
+    var host = document.getElementById('locks-delta');
+    if (!host) return;
+    var d = state.lockDelta;
+    if (!d || (!d.added.length && !d.released.length && !d.changed.length)) {
+      host.innerHTML = '';
+      return;
+    }
+    var rows = '';
+    d.added.forEach(function (l) {
+      rows += '<div class="delta-row is-added"><span class="delta-mark">+</span>' + lockLine(l) + '</div>';
+    });
+    d.changed.forEach(function (c) {
+      rows += '<div class="delta-row is-changed"><span class="delta-mark">~</span>' +
+        lockLine(c.to) + ' — ' + esc(c.from.lock_status) + ' → ' + esc(c.to.lock_status) + '</div>';
+    });
+    d.released.forEach(function (l) {
+      rows += '<div class="delta-row is-released"><span class="delta-mark">−</span>' + lockLine(l) + '</div>';
+    });
+    host.innerHTML = '<div class="panel-subhead">What changed since the previous snapshot</div>' +
+      '<div class="delta-list">' + rows + '</div>';
+  }
+
+  // setSnapshot records a new lock snapshot and the delta from the last one.
+  function setSnapshot(snap) {
+    if (!snap) return;
+    state.lockDelta = state.locks ? diffLocks(state.locks, snap) : null;
+    state.locks = snap;
+  }
+
   function renderLocks() {
     var snap = state.locks;
     var timeEl = document.getElementById('locks-time');
@@ -396,6 +464,8 @@
 
     timeEl.textContent = 'snapshot at ' + fmtTime(snap.at);
     renderWaitGraph(snap);
+    renderLockDelta();
+    renderTransactions(snap);
 
     var waits = snap.waits || [];
     if (!waits.length) {
@@ -468,6 +538,36 @@
     html += '</tbody></table></div>';
     tableEl.innerHTML = html;
     setCount('locks', (snap.locks || []).length);
+  }
+
+  // --------------------------------------------------- transaction inspector
+  //
+  // The weights InnoDB uses to pick a deadlock victim are readable, and without
+  // them "which transaction gets rolled back" is folklore. Roughly, the cheaper
+  // transaction to undo loses — so rows modified is the number to watch.
+  function renderTransactions(snap) {
+    var host = document.getElementById('locks-trx');
+    if (!host) return;
+    var trx = (snap && snap.transactions) || [];
+    if (!trx.length) { host.innerHTML = ''; return; }
+
+    var html = '<div class="panel-subhead">Transactions</div>' +
+      '<div class="table-wrap"><table class="data"><thead><tr>' +
+      '<th>Actor</th><th>State</th><th>Isolation</th>' +
+      '<th title="performance_schema reports this as trx_rows_locked">Rows locked</th>' +
+      '<th title="Roughly what decides the deadlock victim: the cheaper transaction to undo loses">Rows modified</th>' +
+      '<th>Waiting since</th></tr></thead><tbody>';
+    trx.forEach(function (t) {
+      html += '<tr' + (t.wait_started ? ' class="is-waiting"' : '') + '>' +
+        '<td>' + esc(actorName(t.actor)) + '</td>' +
+        '<td class="mono">' + esc(t.state || '—') + '</td>' +
+        '<td class="mono">' + esc(t.isolation_level || '—') + '</td>' +
+        '<td class="mono">' + t.rows_locked + '</td>' +
+        '<td class="mono">' + t.rows_modified + '</td>' +
+        '<td class="mono">' + esc(t.wait_started || '—') + '</td>' +
+        '</tr>';
+    });
+    host.innerHTML = html + '</tbody></table></div>';
   }
 
   function actorName(id) {
@@ -702,7 +802,7 @@
         appendWire(ev.wire);
         break;
       case 'locks':
-        state.locks = ev.locks;
+        setSnapshot(ev.locks);
         renderLocks();
         break;
       case 'docker':
@@ -727,26 +827,52 @@
     el._timer = setTimeout(function () { el.hidden = true; }, 6000);
   }
 
+  // nextPendingStep is the step the next press of Step will submit.
+  function nextPendingStep() {
+    var cursor = (state.run && state.run.cursor) || 0;
+    return stepsByIndex[cursor + 1] || null;
+  }
+
   function doStep() {
     if (busy) return;
-    busy = true;
-    var btn = document.getElementById('btn-step');
-    btn.disabled = true;
-    postJSON('/run/' + runID + '/step')
-      .then(function (res) {
-        if (!res.ok) {
-          if (res.done) toast('Every step has been submitted.', 'warn');
-          else toast(res.error, res.blocked_actor ? 'warn' : 'error');
-        } else if (res.step) {
-          // A newly submitted step gets the generous reveal margin.
-          selectStep(res.step.index, true);
-        }
-      })
-      .catch(function (err) { toast(String(err), 'error'); })
-      .finally(function () {
-        busy = false;
-        renderRunState();
-      });
+
+    // The guess has to be taken before the statement is submitted, or there is
+    // nothing to guess about.
+    var pending = predict.on ? nextPendingStep() : null;
+    var ask = pending ? askPrediction(pending) : Promise.resolve('');
+
+    ask.then(function (guess) {
+      if (busy) return;
+      busy = true;
+      var btn = document.getElementById('btn-step');
+      btn.disabled = true;
+      postJSON('/run/' + runID + '/step')
+        .then(function (res) {
+          if (!res.ok) {
+            if (res.done) toast('Every step has been submitted.', 'warn');
+            else toast(res.error, res.blocked_actor ? 'warn' : 'error');
+            return;
+          }
+          if (res.step) {
+            // A newly submitted step gets the generous reveal margin.
+            selectStep(res.step.index, true);
+          }
+          if (!guess || !res.step) return;
+          // A step that blocks has no final outcome yet; wait for the settle
+          // window to pass so the verdict is judged on what happened, not on
+          // where it was when the request returned.
+          var index = res.step.index;
+          setTimeout(function () {
+            var settled = stepsByIndex[index];
+            if (settled) scorePrediction(guess, settled);
+          }, (window.DL_SETTLE_MS || 400) + 350);
+        })
+        .catch(function (err) { toast(String(err), 'error'); })
+        .finally(function () {
+          busy = false;
+          renderRunState();
+        });
+    });
   }
 
   function doPlay() {
@@ -762,6 +888,99 @@
       .finally(function () { busy = false; renderRunState(); });
   }
 
+  // ------------------------------------------------------------- predict
+  //
+  // The scenario declares what each step should do and the run records what it
+  // did. Predict mode simply withholds the first and asks for a guess before
+  // revealing the second — the data is already there, this is a switch over it.
+  var predict = {
+    on: false,
+    right: 0,
+    wrong: 0,
+    // pending resolves once the reader has answered, so doStep can await it.
+    ask: null
+  };
+
+  var predictToggle = document.getElementById('predict-mode');
+  if (predictToggle) {
+    try { predictToggle.checked = localStorage.getItem('dl-predict') === '1'; } catch (e) {}
+    predict.on = predictToggle.checked;
+    document.body.classList.toggle('is-predicting', predict.on);
+    predictToggle.addEventListener('change', function () {
+      predict.on = predictToggle.checked;
+      document.body.classList.toggle('is-predicting', predict.on);
+      try { localStorage.setItem('dl-predict', predict.on ? '1' : '0'); } catch (e) {}
+      renderAllSteps();
+    });
+  }
+
+  var PREDICT_CHOICES = [
+    { value: 'ok', label: 'completes' },
+    { value: 'blocks', label: 'blocks on a lock' },
+    { value: 'deadlock', label: 'deadlock (1213)' },
+    { value: 'timeout', label: 'lock wait timeout (1205)' },
+    { value: 'error', label: 'some other error' }
+  ];
+
+  // askPrediction resolves to the chosen outcome, or '' if the reader skipped.
+  function askPrediction(step) {
+    var body = '<div class="predict-sql"><code>' + esc(oneLineSQL(step.sql)) + '</code></div>' +
+      '<div class="predict-choices">' +
+      PREDICT_CHOICES.map(function (c) {
+        return '<button class="btn btn-sm" type="button" data-guess="' + c.value + '">' +
+          esc(c.label) + '</button>';
+      }).join('') + '</div>';
+
+    return window.DL.confirm({
+      title: 'Step ' + step.index + ' · ' + (step.actor_name || step.actor) + ' — what happens?',
+      bodyHTML: body,
+      confirm: '',
+      cancel: 'Skip',
+      onBody: function (el, close) {
+        el.querySelectorAll('[data-guess]').forEach(function (b) {
+          b.addEventListener('click', function () { close(b.dataset.guess); });
+        });
+      }
+    });
+  }
+
+  function oneLineSQL(sql) {
+    return String(sql || '').replace(/\s+/g, ' ').trim();
+  }
+
+  // scorePrediction compares the guess with what the step actually did, once it
+  // has settled. A blocked step is judged on whether it ever waited, matching
+  // how the scenario's own expectations are evaluated.
+  function scorePrediction(guess, step) {
+    if (!guess) return;
+    var actual = step.actual || '';
+    var right = guess === actual ||
+      (guess === 'blocks' && step.was_blocked) ||
+      (guess === 'error' && (actual === 'deadlock' || actual === 'timeout' || actual === 'error'));
+    if (right) predict.right++; else predict.wrong++;
+
+    toast(right
+      ? 'Right — it ' + describeOutcome(actual) + '. ' + predictScore()
+      : 'Not quite: you said ' + guess + ', it ' + describeOutcome(actual) + '. ' + predictScore(),
+      right ? 'ok' : 'warn');
+  }
+
+  function describeOutcome(actual) {
+    switch (actual) {
+      case 'ok': return 'completed';
+      case 'blocks': return 'blocked';
+      case 'deadlock': return 'was chosen as the deadlock victim';
+      case 'timeout': return 'hit the lock wait timeout';
+      case 'error': return 'failed';
+      default: return 'did something unrecorded';
+    }
+  }
+
+  function predictScore() {
+    var total = predict.right + predict.wrong;
+    return predict.right + '/' + total + ' so far.';
+  }
+
   var stepBtnEl = document.getElementById('btn-step');
   if (!stepBtnEl) {
     // Archived run: no controls to wire, and no keyboard stepping either.
@@ -773,7 +992,7 @@
   document.getElementById('btn-play').addEventListener('click', doPlay);
   document.getElementById('btn-snapshot').addEventListener('click', function () {
     postJSON('/run/' + runID + '/snapshot').then(function (res) {
-      if (res.ok) { state.locks = res.locks; renderLocks(); activateTab('locks'); }
+      if (res.ok) { setSnapshot(res.locks); renderLocks(); activateTab('locks'); }
     });
   });
   document.getElementById('btn-close-run').addEventListener('click', function () {

@@ -11,7 +11,7 @@
           <a href="/">Scenarios</a> <span>/</span>
           {{if .Job.ScenarioID}}<a href="/case/{{.Job.ScenarioID}}">{{.Job.Name}}</a>{{else}}{{.Job.Name}}{{end}}
         </div>
-        <h1>{{if eq .Job.Kind "isolation-matrix"}}Isolation matrix{{else}}Minimal reproduction{{end}}</h1>
+        <h1>{{if eq .Job.Kind "isolation-matrix"}}Isolation matrix{{else if eq .Job.Kind "version-matrix"}}Version matrix{{else}}Minimal reproduction{{end}}</h1>
         <div class="badge-row">
           <span class="chip chip-status" data-run-status="{{.Job.Status}}">{{.Job.Status}}</span>
           <span class="chip mono">{{.Job.ID}}</span>
@@ -27,7 +27,7 @@
 
     <section class="panel">
       <div class="panel-head">
-        <h2>{{if eq .Job.Kind "isolation-matrix"}}Outcome per isolation level{{else}}What the reduction found{{end}}</h2>
+        <h2>{{if eq .Job.Kind "isolation-matrix"}}Outcome per isolation level{{else if eq .Job.Kind "version-matrix"}}Outcome per MySQL version{{else}}What the reduction found{{end}}</h2>
       </div>
       <div class="panel-body">
         <div id="analysis-out" data-job="{{.Job.ID}}" data-kind="{{.Job.Kind}}"></div>

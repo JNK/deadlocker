@@ -17,8 +17,9 @@ import (
 // MySQL run per attempt, so they are measured in tens of seconds, not
 // milliseconds.
 const (
-	JobMatrix = "isolation-matrix"
-	JobShrink = "shrink"
+	JobMatrix  = "isolation-matrix"
+	JobVersion = "version-matrix"
+	JobShrink  = "shrink"
 )
 
 // Job is one background analysis.
@@ -185,7 +186,12 @@ func outcomeOfCell(c MatrixCell) string {
 }
 
 type MatrixColumn struct {
+	// Label is what the column is headed with -- an isolation level, or a MySQL
+	// image. Isolation is kept alongside it because it is also a fact about the
+	// run, not only a heading.
+	Label     string       `json:"label"`
 	Isolation string       `json:"isolation"`
+	Image     string       `json:"image,omitempty"`
 	Cells     []MatrixCell `json:"cells"`
 	Deadlocks int          `json:"deadlocks"`
 	Timeouts  int          `json:"timeouts"`
@@ -195,8 +201,11 @@ type MatrixColumn struct {
 }
 
 type MatrixResult struct {
-	ScenarioID string         `json:"scenario_id"`
-	Name       string         `json:"name"`
+	ScenarioID string `json:"scenario_id"`
+	Name       string `json:"name"`
+	// Axis names what the columns vary: "isolation" or "version".
+	Axis       string         `json:"axis"`
+	AxisLabel  string         `json:"axis_label"`
 	StepLabels []string       `json:"step_labels"`
 	StepActors []string       `json:"step_actors"`
 	Columns    []MatrixColumn `json:"columns"`
@@ -208,6 +217,11 @@ type MatrixResult struct {
 var IsolationLevels = []string{
 	"READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE",
 }
+
+// DefaultVersions is the version sweep. 5.7 is included because it is still
+// widely deployed and its locking genuinely differs; 8.0 and 8.4 bracket the
+// current line.
+var DefaultVersions = []string{"mysql:5.7", "mysql:8.0", "mysql:8.4"}
 
 type IsolationMatrixInput struct {
 	ScenarioID string `json:"scenario_id,omitempty" jsonschema:"the scenario to sweep"`
@@ -248,23 +262,91 @@ func (a *API) StartIsolationMatrix(ctx context.Context, in IsolationMatrixInput)
 	}, nil
 }
 
+type VersionMatrixInput struct {
+	ScenarioID string   `json:"scenario_id,omitempty" jsonschema:"the scenario to sweep"`
+	YAML       string   `json:"yaml,omitempty" jsonschema:"ad-hoc YAML instead of a saved scenario"`
+	Images     []string `json:"images,omitempty" jsonschema:"container images to compare; defaults to mysql:5.7, mysql:8.0 and mysql:8.4"`
+}
+
+// StartVersionMatrix runs the same scenario against several MySQL versions.
+//
+// Locking behaviour is not fixed across releases -- 8.0 changed how SELECT
+// COUNT(*) and several optimiser paths lock, and 5.7 predates NOWAIT and SKIP
+// LOCKED entirely -- so "does this still behave the same on the version we
+// actually run" is a question worth answering by running it.
+//
+// It is slower than the isolation sweep: each new image is a pull.
+func (a *API) StartVersionMatrix(ctx context.Context, in VersionMatrixInput) (JobStartedOutput, error) {
+	base, err := a.caseFor(in.ScenarioID, in.YAML)
+	if err != nil {
+		return JobStartedOutput{}, err
+	}
+	images := in.Images
+	if len(images) == 0 {
+		images = DefaultVersions
+	}
+	id, err := newJobID()
+	if err != nil {
+		return JobStartedOutput{}, err
+	}
+
+	job := &Job{
+		ID: id, Kind: JobVersion, ScenarioID: base.ID, Name: base.Name,
+		Status: "running", Started: time.Now(),
+		Progress: "starting",
+	}
+	a.jobs.put(job)
+
+	go a.runVersionMatrix(job, base, images)
+
+	return JobStartedOutput{
+		JobID: id, Status: "running",
+		Note: "Runs the scenario once per MySQL version. Poll get_job with this id; " +
+			"the first run of an image includes a pull, so this can take minutes.",
+	}, nil
+}
+
 func (a *API) runMatrix(job *Job, base *casedef.Case) {
+	a.runSweep(job, base, "isolation", "isolation level", IsolationLevels,
+		func(c *casedef.Case, level string) { c.MySQL.Isolation = level })
+}
+
+func (a *API) runVersionMatrix(job *Job, base *casedef.Case, images []string) {
+	a.runSweep(job, base, "version", "MySQL version", images,
+		func(c *casedef.Case, image string) { c.MySQL.Image = image })
+}
+
+// runSweep runs the scenario once per value along one axis and records where
+// the outcomes diverge. Isolation level and server version are the two axes
+// worth sweeping, and the only difference between them is which field of the
+// case a variant sets.
+func (a *API) runSweep(
+	job *Job, base *casedef.Case,
+	axis, axisLabel string, values []string,
+	apply func(*casedef.Case, string),
+) {
 	ctx := WithSource(context.Background(), SourceUI)
-	res := &MatrixResult{ScenarioID: base.ID, Name: base.Name}
+	res := &MatrixResult{
+		ScenarioID: base.ID, Name: base.Name,
+		Axis: axis, AxisLabel: axisLabel,
+	}
 	for _, s := range base.Steps {
 		res.StepLabels = append(res.StepLabels, s.Label)
 		res.StepActors = append(res.StepActors, s.Actor)
 	}
 
-	for i, level := range IsolationLevels {
+	for i, value := range values {
 		a.jobs.update(job.ID, func(j *Job) {
-			j.Progress = fmt.Sprintf("running %s (%d of %d)", level, i+1, len(IsolationLevels))
+			j.Progress = fmt.Sprintf("running %s (%d of %d)", value, i+1, len(values))
 		})
 
-		col := MatrixColumn{Isolation: level}
 		variant := cloneCase(base)
-		variant.MySQL.Isolation = level
+		apply(variant, value)
 		variant.Ephemeral = true
+
+		col := MatrixColumn{
+			Label: value, Isolation: variant.MySQL.Isolation, Image: variant.MySQL.Image,
+		}
 
 		run, err := a.mgr.Start(ctx, variant)
 		if err != nil {
@@ -302,12 +384,20 @@ func (a *API) runMatrix(job *Job, base *casedef.Case) {
 		j.Matrix = res
 	})
 	a.note(ctx, Activity{
-		Kind: KindAnalysis, Tool: "isolation_matrix", ScenarioID: base.ID,
-		Summary: "isolation matrix finished: " + res.Summary,
+		Kind: KindAnalysis, Tool: job.Kind, ScenarioID: base.ID,
+		Summary: axisLabel + " matrix finished: " + res.Summary,
 	})
 }
 
-// summariseMatrix states the interesting part: whether the level changes
+// plural picks a form by count.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// summariseMatrix states the interesting part: whether the swept axis changes
 // anything, and where.
 func summariseMatrix(res *MatrixResult) string {
 	var differing []string
@@ -323,16 +413,34 @@ func summariseMatrix(res *MatrixResult) string {
 			var outcomes []string
 			for _, col := range res.Columns {
 				if i < len(col.Cells) {
-					outcomes = append(outcomes, col.Isolation+": "+col.Cells[i].Outcome)
+					outcomes = append(outcomes, col.Label+": "+col.Cells[i].Outcome)
 				}
 			}
 			differing = append(differing, fmt.Sprintf("step %d (%s)", i+1, strings.Join(outcomes, ", ")))
 		}
 	}
-	if len(differing) == 0 {
-		return "the isolation level changes nothing here; every level behaves identically"
+	// A column that could not run is not evidence of agreement. Saying "every
+	// column behaves identically" when one of them never executed would be the
+	// most misleading thing this summary could do.
+	var failed []string
+	for _, col := range res.Columns {
+		if col.Error != "" || len(col.Cells) == 0 {
+			failed = append(failed, col.Label)
+		}
 	}
-	return "outcomes differ at " + strings.Join(differing, "; ")
+	suffix := ""
+	if len(failed) > 0 {
+		suffix = fmt.Sprintf(" (%s did not run, so %s not compared)",
+			strings.Join(failed, ", "), plural(len(failed), "it was", "they were"))
+	}
+
+	if len(differing) == 0 {
+		if len(failed) == len(res.Columns) {
+			return "nothing could be compared: no column ran"
+		}
+		return "the " + res.AxisLabel + " changes nothing here; every column that ran behaves identically" + suffix
+	}
+	return "outcomes differ at " + strings.Join(differing, "; ") + suffix
 }
 
 // ------------------------------------------------------------- shrink

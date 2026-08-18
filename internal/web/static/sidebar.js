@@ -307,7 +307,9 @@
 
   function jobHTML(j) {
     var meta = j.status === 'running' ? (j.progress || 'running…') : j.status;
-    return '<span class="job-kind">' + esc(j.kind === 'isolation-matrix' ? 'matrix' : 'shrink') + '</span>' +
+    var kind = j.kind === 'isolation-matrix' ? 'matrix'
+      : j.kind === 'version-matrix' ? 'versions' : 'shrink';
+    return '<span class="job-kind">' + esc(kind) + '</span>' +
       '<span class="job-body">' +
       '<span class="job-name">' + esc(j.name || j.scenario_id) + '</span>' +
       '<span class="job-meta">' + esc(meta) + '</span>' +

@@ -1,0 +1,123 @@
+name: ORDER BY … LIMIT 1 can lock far more than one row
+category: Indexes
+tags: [limit, order-by, full-scan, record-lock, queue]
+docs:
+  - title: LIMIT Query Optimization
+    url: https://dev.mysql.com/doc/refman/8.4/en/limit-optimization.html
+
+description: |
+  `LIMIT 1` bounds what comes back. It does not bound what gets locked.
+
+  Locking happens as rows are read, and the limit is applied after. If the
+  optimiser cannot walk the index in the order you asked for, it reads and locks
+  everything the `WHERE` clause matches, sorts, and then throws away all but one
+  — having already locked the lot, until commit.
+
+  This is the classic broken job queue:
+
+      SELECT * FROM jobs WHERE state = 'ready' ORDER BY priority DESC LIMIT 1 FOR UPDATE;
+
+  It reads as "take one job". With no index that satisfies both the filter and
+  the ordering, it means "lock every ready job, then take one" — so a second
+  worker running the identical query waits for the first to commit, and the
+  queue is serial no matter how many workers you add.
+
+  Step 5 shows the fix that is not an index: `SKIP LOCKED`. Steps 6 and 7 show
+  the one that is — an index on `(state, priority)` lets the scan stop after one
+  row, so only that row is locked.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE jobs (
+      id       INT NOT NULL,
+      state    VARCHAR(16) NOT NULL,
+      priority INT NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - |
+    INSERT INTO jobs (id, state, priority) VALUES
+      (1,'ready',5), (2,'ready',9), (3,'ready',1),
+      (4,'ready',7), (5,'ready',3)
+
+actors:
+  - id: a
+    name: Worker one
+    accent: blue
+  - id: b
+    name: Worker two
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Take the highest priority job
+    sql: SELECT * FROM jobs WHERE state = 'ready' ORDER BY priority DESC LIMIT 1 FOR UPDATE
+    note: >-
+      Returns job 2. Look at the Locks tab: five record locks, not one. Every
+      ready job was read and locked before the sort decided which one to return.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Take the next job the same way
+    sql: SELECT * FROM jobs WHERE state = 'ready' ORDER BY priority DESC LIMIT 1 FOR UPDATE
+    note: >-
+      Blocks. There are four other jobs available and this worker can have none
+      of them — the queue is serial.
+    expect: blocks
+
+  - actor: a
+    label: Commit worker one
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Add the index that satisfies filter and order together
+    sql: CREATE INDEX idx_state_priority ON jobs (state, priority)
+    note: >-
+      Now the scan can walk ready jobs in priority order and stop after one.
+    expect: ok
+
+  - actor: a
+    label: Take a job again, with the index in place
+    sql: SELECT * FROM jobs WHERE state = 'ready' ORDER BY priority DESC LIMIT 1 FOR UPDATE
+    note: >-
+      One row read, one row locked. Check the step's query plan and the Locks
+      tab: the lock count drops from five to one, and no sort is needed.
+    expect: ok
+
+  - actor: b
+    label: The other worker can now take a different job
+    sql: SELECT * FROM jobs WHERE state = 'ready' AND priority < 9 ORDER BY priority DESC LIMIT 1 FOR UPDATE
+    note: Granted immediately. Two workers, two jobs, no waiting.
+    expect: ok
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

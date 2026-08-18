@@ -110,7 +110,7 @@
     <nav id="sidebar-analyses-list">
       {{range .Analyses}}
       <a class="job-chip status-{{.Status}}" data-job-id="{{.ID}}" href="/analysis/{{.ID}}">
-        <span class="job-kind">{{if eq .Kind "isolation-matrix"}}matrix{{else}}shrink{{end}}</span>
+        <span class="job-kind">{{if eq .Kind "isolation-matrix"}}matrix{{else if eq .Kind "version-matrix"}}versions{{else}}shrink{{end}}</span>
         <span class="job-body">
           <span class="job-name">{{.Name}}</span>
           <span class="job-meta">{{if eq .Status "running"}}{{.Progress}}{{else}}{{.Status}}{{end}}</span>

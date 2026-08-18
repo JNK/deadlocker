@@ -204,17 +204,20 @@ func main() {
 	decode(out, &up)
 	fmt.Printf("update_scenario: isolation is now %s\n", up.Scenario.Isolation)
 
-	// Creating over an existing file must fail rather than silently overwrite.
+	// Writing over an existing scenario is allowed now: every write is kept as a
+	// version, so the refusal only stood between a user and the obvious action.
 	out = call(ctx, session, "create_scenario", map[string]any{
 		"yaml": updated, "path": "mcp-probe/probe-gap-lock.yaml",
 	})
 	fmt.Printf("create over existing path: %s\n", firstLine(out))
 
-	// And so must creating a scenario whose derived id is already taken.
-	out = call(ctx, session, "create_scenario", map[string]any{
-		"yaml": updated, "path": "elsewhere/probe-gap-lock.yaml",
-	})
-	fmt.Printf("create with a taken id:    %s\n", firstLine(out))
+	// With no path at all, one is derived from the name.
+	out = call(ctx, session, "create_scenario", map[string]any{"yaml": updated})
+	var derived struct {
+		Path string `json:"path"`
+	}
+	decode(out, &derived)
+	fmt.Printf("create with no path:       %s\n", derived.Path)
 
 	// --- version history -------------------------------------------------
 	// Two writes have happened by now (create, then update), so the scenario

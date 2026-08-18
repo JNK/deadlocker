@@ -263,8 +263,13 @@ type SaveScenarioOutput struct {
 	Warnings []string        `json:"warnings,omitempty"`
 }
 
-// CreateScenario writes a new scenario file. It refuses to overwrite one that
-// already exists; use UpdateScenario for that.
+// CreateScenario writes a scenario file, deriving the path from the name when
+// none is given.
+//
+// Writing over an existing scenario is allowed. It used to be refused, on the
+// grounds that overwriting someone's file is destructive — but every write is
+// now kept as a version, so the previous content is one click away and the
+// refusal only stood between a user and the obvious action.
 func (a *API) CreateScenario(ctx context.Context, in CreateScenarioInput) (SaveScenarioOutput, error) {
 	parsed, err := casedef.Parse([]byte(in.YAML))
 	if err != nil {
@@ -275,24 +280,11 @@ func (a *API) CreateScenario(ctx context.Context, in CreateScenarioInput) (SaveS
 		path = suggestPath(parsed)
 	}
 
-	// A scenario's id normally comes from its file name rather than an explicit
-	// `id:` field, so checking the parsed id alone would miss the common case.
-	// Refuse if either the target file or the id it would take is already
-	// occupied.
+	note := "created via " + SourceOf(ctx)
 	if a.lib.Exists(path) {
-		return SaveScenarioOutput{}, fmt.Errorf(
-			"%s already exists; use update_scenario to change it, or pass a different path", path)
+		note = "replaced via " + SourceOf(ctx)
 	}
-	candidate := parsed.ID
-	if candidate == "" {
-		candidate = casedef.IDForPath(path)
-	}
-	if existing, ok := a.lib.Get(candidate); ok {
-		return SaveScenarioOutput{}, fmt.Errorf(
-			"a scenario with id %q already exists at %s; use update_scenario to change it, or pass a different path",
-			candidate, existing.Path)
-	}
-	saved, err := a.lib.SaveNote(path, []byte(in.YAML), "created via "+SourceOf(ctx))
+	saved, err := a.lib.SaveNote(path, []byte(in.YAML), note)
 	if err != nil {
 		return SaveScenarioOutput{}, err
 	}

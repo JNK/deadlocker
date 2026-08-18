@@ -37,10 +37,14 @@
         <div class="panel-head">
           <h2>Scenario</h2>
           <div class="panel-head-actions">
+            <!-- Optional: with no path the file name is derived from the
+                 scenario's own name, which is a better answer than making
+                 someone invent one. -->
             <input class="input input-sm" id="pg-path" spellcheck="false"
-                   placeholder="my-scenarios/experiment.yaml"
+                   placeholder="derived from the name"
                    value="{{if .Editing}}{{.Case.Path}}{{end}}" {{if .Editing}}readonly{{end}}>
-            <button class="btn btn-sm{{if .Editing}} btn-primary{{end}}" id="pg-save" type="button">
+            <span class="muted" id="pg-dirty">no changes</span>
+            <button class="btn btn-sm{{if .Editing}} btn-primary{{end}}" id="pg-save" type="button" disabled>
               {{if .Editing}}Save changes{{else}}Save to library{{end}}
             </button>
           </div>

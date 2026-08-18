@@ -65,32 +65,51 @@
       });
   });
 
-  document.getElementById('pg-save').addEventListener('click', function () {
-    var path = document.getElementById('pg-path').value.trim();
-    if (!path) {
-      show('error', 'Give the file a name first, for example <code>my-scenarios/experiment.yaml</code>.');
-      return;
-    }
-    // Editing writes back over the same file, so make that explicit once.
-    var ask = window.DL_EDITING
-      ? window.DL.confirm({
-          title: 'Overwrite ' + path + '?',
-          body: 'The file on disk is replaced with what is in the editor.',
-          confirm: 'Save changes',
-          cancel: 'Cancel'
-        })
-      : Promise.resolve(true);
+  // ------------------------------------------------------------- saving
+  //
+  // Saving is only offered when there is something to save. That removes the
+  // "overwrite?" question entirely: an identical save was the only case where
+  // the answer mattered, and every real save is kept as a version anyway.
+  var saveBtn = document.getElementById('pg-save');
+  var dirtyEl = document.getElementById('pg-dirty');
+  var savedSource = source.value;
 
-    ask.then(function (ok) {
-      if (!ok) return;
-      return save(path);
-    });
+  function isDirty() { return source.value !== savedSource; }
+
+  function paintDirty() {
+    var dirty = isDirty();
+    saveBtn.disabled = !dirty;
+    if (!dirtyEl) return;
+    dirtyEl.textContent = dirty ? 'unsaved changes' : 'no changes';
+    dirtyEl.className = dirty ? 'muted is-dirty' : 'muted';
+  }
+  source.addEventListener('input', paintDirty);
+  paintDirty();
+
+  saveBtn.addEventListener('click', function () {
+    if (!isDirty()) return;
+    // An empty path is fine: the server derives one from the scenario's name.
+    save(document.getElementById('pg-path').value.trim());
+  });
+
+  // Ctrl/Cmd-S is what everyone reaches for in an editor.
+  source.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      if (isDirty()) save(document.getElementById('pg-path').value.trim());
+    }
   });
 
   function save(path) {
     return post('/playground/save', { path: path, source: source.value })
       .then(function (res) {
         if (res.ok) {
+          savedSource = source.value;
+          paintDirty();
+          // The derived path is worth showing once it exists, so the next save
+          // goes to the same file rather than deriving it again.
+          var pathEl = document.getElementById('pg-path');
+          if (!pathEl.value.trim()) pathEl.value = res.path;
           show('ok', (window.DL_EDITING ? 'Changes saved to ' : 'Saved to ') +
             '<code>cases/' + esc(res.path) + '</code>. ' +
             '<a href="/case/' + esc(res.id) + '">Open it</a>.');

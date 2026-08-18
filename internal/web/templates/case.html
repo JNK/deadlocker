@@ -199,7 +199,22 @@
             </p>
             <button class="btn btn-primary" data-analyse="isolation"
                     data-scenario="{{.Case.ID}}">Run the sweep</button>
-            <div class="analysis-panel" id="matrix-out"></div>
+            <div class="analysis-panel" id="isolation-out"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Version matrix</h2></div>
+          <div class="panel-body">
+            <p class="muted" style="margin-top:0">
+              Runs this scenario against MySQL 5.7, 8.0 and 8.4 and reports where they
+              disagree. Locking is not fixed across releases, so this answers "does this
+              still hold on the version we actually run". Slower than the isolation sweep:
+              an image it has never seen has to be pulled first.
+            </p>
+            <button class="btn btn-primary" data-analyse="version"
+                    data-scenario="{{.Case.ID}}">Compare versions</button>
+            <div class="analysis-panel" id="version-out"></div>
           </div>
         </div>
 

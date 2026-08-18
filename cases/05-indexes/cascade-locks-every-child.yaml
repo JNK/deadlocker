@@ -1,0 +1,115 @@
+name: ON DELETE CASCADE locks every child it will remove
+category: Indexes
+tags: [foreign-key, cascade, record-lock, fan-out]
+docs:
+  - title: FOREIGN KEY constraints — referential actions
+    url: https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html#foreign-key-referential-actions
+
+description: |
+  The foreign key scenarios so far look upward: a child insert locks its parent.
+  `ON DELETE CASCADE` looks the other way, and the blast radius is much larger.
+
+  Deleting one parent row deletes every child that references it, and takes an
+  exclusive lock on each. One statement, one row named, and the lock count is
+  however many children happen to exist. On a hot parent — a tenant, an
+  account — that is unbounded by anything in the SQL you wrote.
+
+  Watch the Locks tab after step 2: one `X,REC_NOT_GAP` on the parent, and one
+  on every child row, plus their index entries.
+
+  Two consequences worth carrying away:
+
+  - The lock is taken before you know how many rows it covers. `DELETE FROM
+    tenants WHERE id = 1` is not a one-row statement; it is an
+    N-row statement where N is a property of your data.
+  - Anything touching those children waits, including statements about
+    completely unrelated parents that happen to share the table.
+
+  The mitigation is usually to delete children in batches yourself and remove
+  the parent last, so no single transaction holds the whole set.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE tenants (
+      id   INT NOT NULL,
+      name VARCHAR(64) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+  - |
+    CREATE TABLE documents (
+      id        INT NOT NULL,
+      tenant_id INT NOT NULL,
+      title     VARCHAR(64) NOT NULL,
+      PRIMARY KEY (id),
+      KEY idx_tenant (tenant_id),
+      CONSTRAINT fk_tenant FOREIGN KEY (tenant_id)
+        REFERENCES tenants (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO tenants (id, name) VALUES (1, 'acme'), (2, 'globex')
+  - |
+    INSERT INTO documents (id, tenant_id, title) VALUES
+      (100,1,'one'), (101,1,'two'), (102,1,'three'),
+      (103,1,'four'), (104,2,'other tenant')
+
+actors:
+  - id: a
+    name: Tenant remover
+    accent: rose
+  - id: b
+    name: Document editor
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Delete one tenant
+    sql: DELETE FROM tenants WHERE id = 1
+    note: >-
+      One row named, five rows locked: the tenant and its four documents. The
+      cascade is executed now, not at commit, so the locks are already held.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Edit one of the cascaded documents
+    sql: UPDATE documents SET title = 'renamed' WHERE id = 102
+    note: >-
+      Blocks. Nothing in this statement mentions tenants, and the row it names
+      is about to cease to exist — but it is locked either way until A decides.
+    expect: blocks
+
+  - actor: a
+    label: Roll the deletion back
+    sql: ROLLBACK
+    note: >-
+      The tenant and all four documents come back, and B's update is granted
+      against a row that briefly did not exist.
+    expect: ok
+
+  - actor: b
+    label: Commit the edit
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: The other tenant's document was never involved
+    sql: SELECT id, tenant_id, title FROM documents ORDER BY id
+    note: >-
+      Document 104 belongs to tenant 2 and was never locked. The fan-out follows
+      the foreign key, not the table.
+    expect: ok

@@ -169,6 +169,17 @@ wait edge, the cycle highlighted when one closes. That graph *is* what InnoDB's
 deadlock detector looks at, so watching a cycle appear is watching the thing
 that is about to roll a transaction back.
 
+The **Locks** tab also shows what *changed* since the previous snapshot —
+locks taken, released, and moved between waiting and granted — because the
+question while stepping is what the last statement did, not what is held now.
+Underneath it, the transaction table carries `rows_locked` and `rows_modified`,
+which is roughly what InnoDB weighs when picking a deadlock victim.
+
+**Predict mode**, beside the Step button, withholds the scenario's declared
+expectation and asks you to guess before each step, then scores you. Every
+scenario is already a falsifiable claim with a recorded answer; this is a switch
+over data that was already there.
+
 The **Deadlock report** tab shows `SHOW ENGINE INNODB STATUS`'s account of what
 happened, syntax-highlighted: the two transactions, which locks each held and
 waited for, the offending statements, and which one was rolled back. The hex
@@ -279,9 +290,12 @@ wrong lesson. Set it low deliberately when the timeout *is* the lesson.
 **Fundamentals** — record locks on an existing row · shared vs exclusive
 compatibility · why a lock wait timeout leaves the transaction open and holding
 locks · the intention locks behind every row lock, and what `LOCK TABLES`
-collides with · `NOWAIT` and `SKIP LOCKED`, the two ways to refuse to wait.
+collides with · `NOWAIT` and `SKIP LOCKED`, the two ways to refuse to wait ·
+`ROLLBACK TO SAVEPOINT` handing back the locks taken after it, without ending
+the transaction.
 
-**Gap locks** — the UUIDv7 case: `SELECT ... FOR UPDATE` on a missing row locks
+**Gap locks** — a `DELETE` holding the space the row used to occupy, so
+re-inserting the same key blocks · the UUIDv7 case: `SELECT ... FOR UPDATE` on a missing row locks
 the supremum gap and blocks every new time-ordered insert · the same scenario
 under `READ COMMITTED`, where it does not · how narrow a gap lock really is ·
 what a range scan locks (including one record past the range).
@@ -297,11 +311,18 @@ what ascending means · what happens when you disable `innodb_deadlock_detect`
 (both sides time out, which is worse).
 
 **Isolation levels** — `SERIALIZABLE` silently making every plain `SELECT` a
-locking read · MVCC consistent reads never blocking and never being blocked.
+locking read · MVCC consistent reads never blocking and never being blocked ·
+a transaction that reads 100, adds 10 and gets 210, because a plain `SELECT`
+uses the snapshot and an `UPDATE` does not · `READ COMMITTED` releasing the
+locks on rows its `WHERE` clause rejected.
 
 **Indexes** — an `UPDATE` with no usable index locking every row it scans · a
 secondary index lookup locking both the index entry and the clustered record ·
-a foreign key making a child insert lock the parent row.
+a foreign key making a child insert lock the parent row · `ON DELETE CASCADE`
+locking every child it is about to remove · `ORDER BY … LIMIT 1` locking five
+rows to return one, and the index that fixes it · `FOR UPDATE OF` locking one
+side of a join instead of both · partition pruning deciding how much gets
+locked.
 
 **Metadata locks** — one idle transaction stopping `ALTER TABLE`, and every
 reader queuing behind the waiting ALTER. Zero row locks involved, which is
@@ -322,7 +343,7 @@ go run ./hack/mcpprobe           # drives the MCP server as a real client
 ```
 
 `verify.py` runs each case end to end and fails if any step's observed behaviour
-stops matching its declared expectation. All 24 currently pass on MySQL 8.4.11.
+stops matching its declared expectation. All 32 currently pass on MySQL 8.4.11.
 
 It also samples `performance_schema.data_locks` after every step and reports
 which lock modes the library actually demonstrated. That is what backs the claim
@@ -504,8 +525,15 @@ pre-warm costs nothing: every run starts its own container on demand regardless.
 
 ## Analysis
 
-Two background analyses on every scenario's **Analyse** tab, also available as
-MCP tools (`isolation_matrix`, `shrink_scenario`, polled with `get_job`).
+Three background analyses on every scenario's **Analyse** tab, also available as
+MCP tools (`isolation_matrix`, `version_matrix`, `shrink_scenario`, polled with
+`get_job`).
+
+The **version matrix** runs the scenario against MySQL 5.7, 8.0 and 8.4.
+Locking is not fixed across releases — 5.7 predates `NOWAIT` and `SKIP LOCKED`
+entirely — so this answers "does this still hold on the version we actually
+run". A column that could not run says so rather than counting as agreement,
+which matters on Apple Silicon where there is no `mysql:5.7` image.
 
 **Isolation matrix** runs the scenario once at each of the four isolation
 levels and reports where the outcomes diverge — answering "what would READ

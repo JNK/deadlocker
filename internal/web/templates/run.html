@@ -44,6 +44,12 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           Play
         </button>
+        <!-- Every scenario is already a falsifiable claim with a recorded
+             answer, so asking the reader to commit to one first costs nothing
+             and is the difference between reading and learning. -->
+        <label class="switch switch-predict" title="Guess each step's outcome before running it">
+          <input type="checkbox" id="predict-mode"> predict
+        </label>
         <button class="btn btn-ghost" id="btn-snapshot" type="button" title="Re-read performance_schema.data_locks now">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
           Locks
@@ -148,8 +154,10 @@
             </div>
             <div id="wait-graph" class="wait-graph"></div>
             <div id="locks-waits"></div>
+            <div id="locks-delta"></div>
             <div id="locks-mdl"></div>
             <div id="locks-table"></div>
+            <div id="locks-trx"></div>
           </div>
 
           <div class="dock-panel" data-panel="wire">

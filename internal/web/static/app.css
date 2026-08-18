@@ -3277,3 +3277,46 @@ body.is-picking-runs .run-chip { cursor: pointer; }
 .doc-link span { font-size: 11.5px; color: var(--text-3); }
 .doc-link svg { flex: none; color: var(--text-3); }
 .doc-link:hover svg { color: var(--accent); }
+
+/* An editor with unsaved changes says so, quietly. */
+.muted.is-dirty { color: var(--warn); }
+
+/* ------------------------------------------------------------- lock delta */
+/* A snapshot says what is held; this says what the last statement did. */
+.delta-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.delta-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+}
+.delta-mark { font-family: var(--mono); font-weight: 700; width: 10px; flex: none; }
+.delta-row.is-added { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.delta-row.is-added .delta-mark { color: var(--ok); }
+.delta-row.is-released { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.delta-row.is-released .delta-mark { color: var(--danger); }
+.delta-row.is-changed { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.delta-row.is-changed .delta-mark { color: var(--warn); }
+
+/* ----------------------------------------------------------- predict mode */
+/* The scenario's own answer is the spoiler, so it goes away — but only for
+   steps that have not run yet. Once a step has an outcome, its note is the
+   explanation rather than the answer, and is worth reading. */
+body.is-predicting .step-card .chip-expect,
+body.is-predicting #step-detail .chip-expect { display: none; }
+body.is-predicting .step-card.status-pending .step-note { display: none; }
+
+.switch-predict { white-space: nowrap; }
+
+.predict-sql {
+  margin: 4px 0 12px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.predict-choices { display: flex; flex-direction: column; gap: 6px; }
+.predict-choices .btn { justify-content: flex-start; width: 100%; }

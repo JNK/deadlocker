@@ -60,17 +60,31 @@
     confirmBtn.classList.toggle('btn-danger', !!opts.danger);
     confirmBtn.classList.toggle('btn-primary', !opts.danger);
 
+    // A confirm button with no label is a dialog that asks something the two
+    // standard answers cannot express -- predict mode's five outcomes, say. The
+    // caller supplies the controls through onBody and closes with its own value.
+    confirmBtn.hidden = opts.confirm === '';
+
     return new Promise(function (resolve) {
       function done() {
         d.removeEventListener('close', done);
-        resolve(d.returnValue === 'confirm');
+        var v = d.returnValue;
+        // A caller-supplied value is passed through as-is; otherwise this is an
+        // ordinary yes/no.
+        resolve(v === 'confirm' ? true : v === 'cancel' ? false : v);
       }
       d.addEventListener('close', done);
       d.returnValue = 'cancel';
+      if (opts.onBody) {
+        opts.onBody(body, function (value) {
+          d.returnValue = value;
+          d.close();
+        });
+      }
       d.showModal();
       // Focus the safe option, so a stray Enter does not confirm a destructive
       // action.
-      (opts.danger ? cancelBtn : confirmBtn).focus();
+      (opts.danger || confirmBtn.hidden ? cancelBtn : confirmBtn).focus();
     });
   }
 

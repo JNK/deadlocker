@@ -103,7 +103,9 @@ func registerTools(srv *mcp.Server, api *agentapi.API) {
 		api.ValidateScenario)
 
 	tool(srv, "create_scenario", "Create a scenario",
-		"Write a new scenario to the library. Fails if a scenario with the same id already exists.",
+		"Write a scenario to the library. The path is derived from the name when omitted. "+
+			"Writing over an existing scenario is allowed: every write is kept as a version, "+
+			"so nothing is lost.",
 		api.CreateScenario)
 
 	tool(srv, "update_scenario", "Update a scenario",
@@ -164,6 +166,13 @@ func registerTools(srv *mcp.Server, api *agentapi.API) {
 			"and SERIALIZABLE, and report where the outcomes differ. Answers 'what would this do "+
 			"under a different isolation level' by doing it. Returns a job id; poll get_job.",
 		api.StartIsolationMatrix)
+
+	tool(srv, "version_matrix", "Sweep MySQL versions",
+		"Run the same scenario against several MySQL images (5.7, 8.0 and 8.4 by default) "+
+			"and report where the outcomes differ. Locking behaviour is not fixed across "+
+			"releases, so this answers 'does this still hold on the version we run'. "+
+			"Slower than the isolation sweep: a new image means a pull. Returns a job id; poll get_job.",
+		api.StartVersionMatrix)
 
 	tool(srv, "shrink_scenario", "Reduce to a minimal repro",
 		"Repeatedly drop steps and re-run, keeping only those needed to still produce the "+

@@ -1,0 +1,106 @@
+name: READ COMMITTED lets go of the rows that did not match
+category: Isolation levels
+tags: [read-committed, semi-consistent-read, full-scan, record-lock]
+docs:
+  - title: Transaction isolation levels — READ COMMITTED
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html
+    note: The semi-consistent read this scenario demonstrates.
+
+description: |
+  An `UPDATE` with no usable index has to examine every row. Under REPEATABLE
+  READ it then *keeps* a lock on every row it examined, matching or not — which
+  is the missing-index scenario, and why one careless statement can serialise a
+  whole table.
+
+  READ COMMITTED does something different, called a **semi-consistent read**:
+  InnoDB reads the latest committed version of each row, hands it to the
+  optimiser, and if the `WHERE` clause does not match, it *releases* the lock
+  immediately rather than holding it to commit.
+
+  The result is that the same statement, on the same table, with the same
+  missing index, locks three rows instead of nine. Look at the Locks tab after
+  step 3 and count.
+
+  This is not free. What you give up is the gap locks and the repeatable
+  snapshot: another session can insert a row that would have matched, and a
+  second run of the same query in the same transaction can return it. That is
+  the trade READ COMMITTED makes everywhere, stated in lock terms.
+
+  The real fix is still the index — with one, REPEATABLE READ locks the three
+  matching rows too, and you keep the guarantees.
+
+mysql:
+  image: mysql:8.4
+  isolation: READ COMMITTED
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE jobs (
+      id     INT NOT NULL,
+      state  VARCHAR(16) NOT NULL,
+      owner  VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - |
+    INSERT INTO jobs (id, state, owner) VALUES
+      (1,'ready','a'), (2,'done','b'), (3,'ready','c'),
+      (4,'done','d'), (5,'ready','e'), (6,'done','f'),
+      (7,'done','g'), (8,'done','h'), (9,'done','i')
+
+actors:
+  - id: a
+    name: Bulk updater
+    accent: blue
+  - id: b
+    name: Someone touching a done row
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Claim every ready job — no index on state
+    sql: UPDATE jobs SET owner = 'worker' WHERE state = 'ready'
+    note: >-
+      A full scan of nine rows, three of which match. Under READ COMMITTED the
+      six non-matching rows are unlocked again as soon as the WHERE clause
+      rejects them. The Locks tab should show three record locks, not nine.
+    expect: ok
+
+  - actor: b
+    label: Update one of the rows that did not match
+    sql: UPDATE jobs SET owner = 'other' WHERE id = 2
+    note: >-
+      Goes straight through. Row 2 is 'done', so A examined it and let it go.
+      Under REPEATABLE READ this same statement blocks — see the missing index
+      scenario, which is this one at the stricter level.
+    expect: ok
+
+  - actor: b
+    label: Now try one that did match
+    sql: UPDATE jobs SET owner = 'other' WHERE id = 3
+    note: >-
+      Blocks. Row 3 is 'ready', so A is holding it — the semi-consistent read
+      only releases what the predicate rejected.
+    expect: blocks
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

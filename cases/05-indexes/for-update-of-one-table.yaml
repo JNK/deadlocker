@@ -1,0 +1,125 @@
+name: FOR UPDATE OF locks one side of a join
+category: Indexes
+tags: [for-update, join, lock-scope, for-update-of]
+docs:
+  - title: Locking reads — FOR UPDATE OF
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html
+
+description: |
+  A locking read over a join locks **every** table it touched, which is rarely
+  what was meant. Joining an order to its customer to check something, then
+  writing only the order, leaves the customer row locked for the rest of the
+  transaction — and customer rows are shared by every order.
+
+  MySQL 8.0.1 added `FOR UPDATE OF tbl_name`, which names the tables to lock and
+  leaves the rest as ordinary consistent reads.
+
+  Step 3 takes both. Step 7, after releasing, takes only the order. The
+  difference in the Locks tab is the whole scenario: the customer row goes from
+  locked to untouched, while the query returns exactly the same rows.
+
+  This is the cheapest fix in the library — one clause, no schema change, no
+  restructuring — and it directly targets the contention that hot shared rows
+  cause.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE customers (
+      id   INT NOT NULL,
+      name VARCHAR(64) NOT NULL,
+      tier VARCHAR(16) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+  - |
+    CREATE TABLE orders (
+      id          INT NOT NULL,
+      customer_id INT NOT NULL,
+      status      VARCHAR(16) NOT NULL,
+      PRIMARY KEY (id),
+      KEY idx_customer (customer_id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO customers (id, name, tier) VALUES (1, 'acme', 'gold')
+  - INSERT INTO orders (id, customer_id, status) VALUES (10, 1, 'new'), (11, 1, 'new')
+
+actors:
+  - id: a
+    name: Order processor
+    accent: blue
+  - id: b
+    name: Account manager
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Join the order to its customer, locking everything
+    sql: |
+      SELECT o.id, c.tier FROM orders o
+      JOIN customers c ON c.id = o.customer_id
+      WHERE o.id = 10 FOR UPDATE
+    note: >-
+      Two locks: order 10, and customer 1. The customer was only read to check
+      the tier, but a plain FOR UPDATE does not know that.
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Update the customer — nothing to do with that order
+    sql: UPDATE customers SET tier = 'platinum' WHERE id = 1
+    note: >-
+      Blocks. Every order this customer has, processed concurrently, contends on
+      this one row.
+    expect: blocks
+
+  - actor: a
+    label: Release everything
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Now do it again, locking only the order
+    sql: |
+      BEGIN;
+    expect: ok
+
+  - actor: a
+    label: Same join, FOR UPDATE OF o
+    sql: |
+      SELECT o.id, c.tier FROM orders o
+      JOIN customers c ON c.id = o.customer_id
+      WHERE o.id = 10 FOR UPDATE OF o
+    note: >-
+      Same rows returned, one lock taken. The customer is read consistently from
+      the snapshot instead of being locked.
+    expect: ok
+
+  - actor: b
+    label: Update the customer again
+    sql: UPDATE customers SET tier = 'silver' WHERE id = 1
+    note: Granted immediately. The contention is gone.
+    expect: ok
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok

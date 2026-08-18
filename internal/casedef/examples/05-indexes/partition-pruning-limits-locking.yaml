@@ -1,0 +1,117 @@
+name: Partition pruning decides how much gets locked
+category: Indexes
+tags: [partitioning, pruning, record-lock, full-scan]
+docs:
+  - title: Partition pruning
+    url: https://dev.mysql.com/doc/refman/8.4/en/partitioning-pruning.html
+  - title: Partitioning and locking
+    url: https://dev.mysql.com/doc/refman/8.4/en/partitioning-limitations-locking.html
+
+description: |
+  Partitioning is usually discussed as a storage and maintenance feature. It is
+  also a locking feature, because a statement that prunes to one partition takes
+  locks in that partition only.
+
+  The catch is that pruning depends on the `WHERE` clause naming the partition
+  key. A query filtered on the key touches one partition; the identical query
+  filtered on something else touches all of them — and takes locks across the
+  whole table.
+
+  Step 3 prunes and locks one row. Step 6 does not prune, and locks rows in
+  every partition, including the ones step 3 never went near. The query plan on
+  each step shows which partitions were examined.
+
+  The lesson is not "partition your tables". It is that if you already have,
+  the locking benefit only arrives when your queries carry the partition key —
+  and a query that quietly stopped carrying it will contend across the whole
+  table without anything else changing.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE events (
+      id     INT NOT NULL,
+      region INT NOT NULL,
+      note   VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id, region)
+    ) ENGINE=InnoDB
+    PARTITION BY LIST (region) (
+      PARTITION p_north VALUES IN (1),
+      PARTITION p_south VALUES IN (2),
+      PARTITION p_east  VALUES IN (3)
+    )
+
+seed:
+  - |
+    INSERT INTO events (id, region, note) VALUES
+      (1,1,'north one'), (2,1,'north two'),
+      (3,2,'south one'), (4,2,'south two'),
+      (5,3,'east one'),  (6,3,'east two')
+
+actors:
+  - id: a
+    name: Regional writer
+    accent: blue
+  - id: b
+    name: Another region
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Lock a row, naming the partition key
+    sql: SELECT * FROM events WHERE region = 1 AND id = 1 FOR UPDATE
+    note: >-
+      Prunes to p_north. Only that partition is examined, and only that row is
+      locked.
+    expect: ok
+
+  - actor: b
+    label: Work in a different region
+    sql: SELECT * FROM events WHERE region = 2 AND id = 3 FOR UPDATE
+    note: >-
+      Granted. Different partition, no contact with A at all — this is the
+      benefit partitioning is supposed to buy.
+    expect: ok
+
+  - actor: b
+    label: Release it again
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Open a fresh transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Now query without the partition key
+    sql: SELECT * FROM events WHERE note = 'north one' FOR UPDATE
+    note: >-
+      No pruning is possible, so every partition is scanned. Blocks on the row
+      Session A holds in p_north — and on the way there it locked rows in
+      p_south and p_east too.
+    expect: blocks
+
+  - actor: a
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok

@@ -803,6 +803,10 @@ func (s *Server) handleAnalyse(w http.ResponseWriter, r *http.Request) {
 		out, err = s.api.StartIsolationMatrix(ctx, agentapi.IsolationMatrixInput{
 			ScenarioID: req.ScenarioID, YAML: req.YAML,
 		})
+	case "version":
+		out, err = s.api.StartVersionMatrix(ctx, agentapi.VersionMatrixInput{
+			ScenarioID: req.ScenarioID, YAML: req.YAML,
+		})
 	case "shrink":
 		out, err = s.api.StartShrink(ctx, agentapi.ShrinkInput{
 			ScenarioID: req.ScenarioID, YAML: req.YAML, Target: req.Target,

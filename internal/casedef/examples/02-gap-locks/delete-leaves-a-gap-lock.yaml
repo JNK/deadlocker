@@ -1,0 +1,100 @@
+name: Deleting a row locks the space it left behind
+category: Gap locks
+tags: [gap-lock, delete, next-key-lock, reinsert]
+docs:
+  - title: InnoDB Locking — next-key locks
+    url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-next-key-locks
+
+description: |
+  A `DELETE` does not release the row's territory when it removes the row. In
+  REPEATABLE READ it takes a next-key lock — the record plus the gap before it —
+  and holds it to commit. The record is gone; the gap it occupied is not free.
+
+  So the delete-then-reinsert pattern, which reads as obviously safe because the
+  row no longer exists, blocks:
+
+      DELETE FROM sessions WHERE token = 'abc';   -- session A, not committed
+      INSERT INTO sessions (token) VALUES ('abc'); -- session B, waits
+
+  Session B is not waiting on a row. It is waiting on the absence of one, which
+  Session A has reserved until it decides whether the deletion is real.
+
+  This has to work this way. If the gap were released, B could insert into it
+  and A could still roll back, and both rows would then exist — or A's
+  `SELECT` would see a row appear inside a range it had already read. The gap
+  lock is what makes rollback safe.
+
+  Two things worth doing here. Watch the Locks tab after step 3: the lock mode
+  on the deleted key is `X` (next-key), not `X,REC_NOT_GAP`. And compare with
+  the READ COMMITTED version of this — under RC there is no gap lock and the
+  insert goes straight through, at the cost of the guarantee above.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE sessions (
+      token   VARCHAR(32) NOT NULL,
+      user_id INT NOT NULL,
+      PRIMARY KEY (token)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO sessions (token, user_id) VALUES ('aaa', 1), ('mmm', 2), ('zzz', 3)
+
+actors:
+  - id: a
+    name: Deleter
+    accent: blue
+  - id: b
+    name: Re-inserter
+    accent: amber
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: b
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Delete the middle session
+    sql: DELETE FROM sessions WHERE token = 'mmm'
+    note: >-
+      The row is gone from A's view. The lock it left behind covers the record
+      and the gap before it, and is held until A commits.
+    expect: ok
+
+  - actor: b
+    label: Insert the same token again
+    sql: INSERT INTO sessions (token, user_id) VALUES ('mmm', 4)
+    note: >-
+      Blocks. Nothing is there to conflict with — that is the point. B needs an
+      insert intention lock in a gap A has reserved.
+    expect: blocks
+
+  - actor: a
+    label: Commit the delete
+    sql: COMMIT
+    note: The gap is released and B's insert goes through immediately.
+    expect: ok
+
+  - actor: b
+    label: Commit
+    sql: COMMIT
+    expect: ok
+
+  - actor: a
+    label: Check what is there now
+    sql: SELECT token, user_id FROM sessions ORDER BY token
+    note: >-
+      One 'mmm', owned by user 4. Had the gap not been held, both the delete's
+      rollback and B's insert could have been valid at once.
+    expect: ok

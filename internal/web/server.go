@@ -620,15 +620,23 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if strings.TrimSpace(req.Path) == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "a file name is required"})
-		return
+	// A path is optional: the name in the document is a better answer than
+	// making someone invent a file name, and it is what create_scenario has
+	// always done.
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		parsed, err := casedef.Parse([]byte(req.Source))
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		path = agentapi.SuggestPath(parsed)
 	}
 	note := strings.TrimSpace(req.Note)
 	if note == "" {
 		note = "edited in the browser"
 	}
-	c, err := s.lib.SaveNote(req.Path, []byte(req.Source), note)
+	c, err := s.lib.SaveNote(path, []byte(req.Source), note)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
