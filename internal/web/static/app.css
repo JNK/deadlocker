@@ -1781,8 +1781,11 @@ body.sheet-open { overflow: hidden; }
   background: var(--violet-soft);
   border-color: transparent;
   color: var(--violet);
-  margin-top: 6px;
 }
+/* The gap under "New scenario" belongs to the sidebar's stacked layout, not to
+   the button — carrying it on .btn-assistant knocked the button out of line
+   everywhere else it is used. */
+.sidebar-actions .btn-assistant { margin-top: 6px; }
 .btn-assistant:hover { background: var(--violet-soft); border-color: var(--violet); }
 
 /* ========================================================== activity feed */
@@ -3334,7 +3337,17 @@ body.is-predicting .step-card.status-pending .step-note { display: none; }
 .job-progress-text { flex: 1; }
 .job-progress .btn-stop { flex: none; }
 
-.empty-actions { display: flex; gap: 8px; justify-content: center; margin: 6px 0 4px; }
+/* align-items rather than the default stretch: every .btn already sets its own
+   height, and stretching a row of them makes any difference in that height into
+   a difference in position. */
+.empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
 
 /* --------------------------------------------------------- import preview */
 /* Dropping a file has no undo, so the confirmation says what is in it. */
