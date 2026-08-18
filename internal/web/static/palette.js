@@ -18,7 +18,7 @@
   var COMMANDS = [
     { kind: 'go', title: 'Scenarios', subtitle: 'all cases', url: '/', terms: ['home', 'library', 'index'] },
     { kind: 'go', title: 'New scenario', subtitle: 'editor with a live step view', url: '/playground', terms: ['create', 'author', 'write', 'playground'] },
-    { kind: 'go', title: 'Build with the assistant', subtitle: 'describe it in prose', url: '/builder', terms: ['ai', 'llm', 'chat', 'generate'] },
+    { kind: 'go', title: 'Build with AI', subtitle: 'describe it in prose', url: '/builder', terms: ['ai', 'llm', 'chat', 'generate', 'assistant'] },
     { kind: 'go', title: 'Compare runs', subtitle: 'diff two runs step by step', url: '/compare', terms: ['diff', 'side by side'] },
     { kind: 'go', title: 'Settings', subtitle: 'model endpoint, MCP, history', url: '/settings', terms: ['config', 'llm', 'api key', 'mcp'] }
   ];
