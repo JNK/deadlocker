@@ -95,7 +95,7 @@ func run() error {
 		log.Printf("wrote %d built-in scenario(s) into %s", len(res.Written), absCases)
 	}
 
-	dbPath, stateDir, err := resolveState(*statePath, absCases)
+	dbPath, _, err := resolveState(*statePath, absCases)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,17 @@ func run() error {
 
 	// Claim the containers this process starts, so another instance can tell
 	// them apart from ones it may clean up.
-	owner, err := mysqlbox.NewOwner(stateDir)
+	//
+	// The registry lives in the config directory rather than beside the state
+	// file, because containers are a property of the machine, not of whichever
+	// state file a given instance was pointed at. Putting it next to -state
+	// meant two instances with different state files could not see each other
+	// and reaped each other's containers — the exact bug this is here to fix.
+	ownerDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	owner, err := mysqlbox.NewOwner(ownerDir)
 	if err != nil {
 		log.Printf("could not register container ownership (%v); containers will be reaped conservatively", err)
 	} else {
@@ -147,7 +157,7 @@ func run() error {
 			mgr.OnDockerLog(key, line)
 		}
 	})
-	pool.Own(owner, stateDir)
+	pool.Own(owner, ownerDir)
 	mgr = engine.NewManager(pool, *settle)
 
 	if !*keepStale {

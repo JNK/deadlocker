@@ -1,0 +1,133 @@
+name: ROLLBACK TO SAVEPOINT undoes rows, not locks
+category: Fundamentals
+tags: [savepoint, record-lock, for-update, lock-scope, insert-intention]
+docs:
+  - title: SAVEPOINT, ROLLBACK TO SAVEPOINT, and RELEASE SAVEPOINT Statements
+    url: https://dev.mysql.com/doc/refman/8.4/en/savepoint.html
+    note: >-
+      "Modifications that the current transaction made to rows after the
+      savepoint was set are undone in the rollback, but InnoDB does not release
+      the row locks that were stored in memory after the savepoint."
+
+description: |
+  A savepoint is a partial undo point inside a transaction, and it is easy to
+  assume that undoing the work also gives back what the work took. It does not.
+  Rolling back to a savepoint undoes the **row modifications** made after it and
+  keeps the **row locks** they acquired, until the transaction ends for real.
+
+  So a savepoint is not a way to narrow a transaction's lock footprint. A long
+  transaction that speculatively locked something it turned out not to need goes
+  on holding it, and everything queued behind that lock goes on waiting — the
+  rollback they were waiting for was not the kind that helps them.
+
+  There is one exception, and the manual is precise about why. A row this
+  transaction **inserted** after the savepoint has no lock stored in memory at
+  all: the lock is implicit, carried by the transaction id written into the row
+  itself. Undoing the insert removes the row, and the lock goes with it. So the
+  insert case behaves the way people expect the whole feature to behave, which
+  is probably where the expectation comes from.
+
+  This scenario shows both halves: an UPDATE's lock surviving the rollback with
+  a session still queued behind it, and an INSERT's lock disappearing in the
+  same rollback and releasing the session queued behind that.
+
+mysql:
+  image: mysql:8.4
+  isolation: REPEATABLE READ
+  lock_wait_timeout: 300
+
+schema:
+  - |
+    CREATE TABLE items (
+      id    INT NOT NULL,
+      label VARCHAR(32) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB
+
+seed:
+  - INSERT INTO items (id, label) VALUES (1, 'first'), (2, 'second')
+
+actors:
+  - id: a
+    name: Session A
+    accent: blue
+  - id: b
+    name: Session B
+    accent: amber
+  - id: c
+    name: Session C
+    accent: teal
+
+steps:
+  - actor: a
+    label: Open a transaction
+    sql: BEGIN
+    expect: ok
+
+  - actor: a
+    label: Mark a savepoint straight away
+    sql: SAVEPOINT before_speculation
+    note: Everything from here on is what the rollback will undo.
+    expect: ok
+
+  - actor: a
+    label: Update row 2
+    sql: UPDATE items SET label = 'speculative' WHERE id = 2
+    note: >-
+      A record lock on the primary key, and an undo record describing how to put
+      the old value back. Both were created after the savepoint; only one of them
+      is going to be undone by it.
+    expect: ok
+
+  - actor: a
+    label: Insert a row that does not exist yet
+    sql: INSERT INTO items (id, label) VALUES (99, 'speculative')
+    note: >-
+      No lock is stored in memory for this row. The lock is implicit: the row
+      carries A's transaction id, and anyone touching it works out from that who
+      holds it.
+    expect: ok
+
+  - actor: b
+    label: Queue up behind the updated row
+    sql: SELECT * FROM items WHERE id = 2 FOR UPDATE
+    note: Blocks, as it must — A holds an exclusive lock on row 2.
+    expect: blocks
+
+  - actor: c
+    label: Queue up behind the inserted row
+    sql: INSERT INTO items (id, label) VALUES (99, 'mine')
+    note: >-
+      Blocks too, on the same key A just inserted. The wait shows up as an
+      insert intention lock against A's implicit lock.
+    expect: blocks
+
+  - actor: a
+    label: Roll back to the savepoint
+    sql: ROLLBACK TO SAVEPOINT before_speculation
+    note: >-
+      A's transaction stays open. Both modifications are undone: row 2 is back to
+      'second' and row 99 is gone. The Locks tab is where the asymmetry shows —
+      the lock on row 2 is still held.
+    expect: ok
+
+  - actor: c
+    label: Session C goes through
+    sql: COMMIT
+    note: >-
+      C was granted the moment the insert was undone: the row that carried A's
+      implicit lock no longer exists, so there was nothing left to wait for.
+    expect: ok
+
+  - actor: a
+    label: Commit, releasing row 2 at last
+    sql: COMMIT
+    note: >-
+      Only now does B's statement complete. The lock on row 2 outlived the
+      rollback that undid the update which took it.
+    expect: ok
+
+  - actor: b
+    label: Session B finally commits
+    sql: COMMIT
+    expect: ok
