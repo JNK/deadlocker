@@ -9,12 +9,13 @@ import (
 
 // Event types published on a run's bus.
 const (
-	EventState  = "state"  // run lifecycle / status change
-	EventStep   = "step"   // a step changed status
-	EventWire   = "wire"   // a decoded MySQL packet
-	EventLocks  = "locks"  // a lock snapshot
-	EventDocker = "docker" // a container log line
-	EventLog    = "log"    // a message from the tool itself
+	EventState   = "state"   // run lifecycle / status change
+	EventStep    = "step"    // a step changed status
+	EventWire    = "wire"    // a decoded MySQL packet
+	EventLocks   = "locks"   // a lock snapshot
+	EventDocker  = "docker"  // a container log line
+	EventLog     = "log"     // a message from the tool itself
+	EventConsole = "console" // a statement typed into the SQL console
 )
 
 // WireEvent is a decoded packet tagged with the step that was in flight when
@@ -22,6 +23,9 @@ const (
 type WireEvent struct {
 	wire.Event
 	StepIndex int `json:"step_index"`
+	// ConsoleID is set instead when the packet belongs to a statement typed into
+	// the console rather than to a step of the scenario.
+	ConsoleID int `json:"console_id,omitempty"`
 }
 
 // DockerLine is a container log line.
@@ -41,11 +45,12 @@ type Event struct {
 	At    time.Time `json:"at"`
 	RunID string    `json:"run_id"`
 
-	State  *RunState     `json:"state,omitempty"`
-	Step   *StepResult   `json:"step,omitempty"`
-	Wire   *WireEvent    `json:"wire,omitempty"`
-	Locks  *LockSnapshot `json:"locks,omitempty"`
-	Docker *DockerLine   `json:"docker,omitempty"`
+	State   *RunState     `json:"state,omitempty"`
+	Step    *StepResult   `json:"step,omitempty"`
+	Wire    *WireEvent    `json:"wire,omitempty"`
+	Locks   *LockSnapshot `json:"locks,omitempty"`
+	Docker  *DockerLine   `json:"docker,omitempty"`
+	Console *ConsoleEntry `json:"console,omitempty"`
 
 	Message string `json:"message,omitempty"`
 	Level   string `json:"level,omitempty"` // info | warn | error

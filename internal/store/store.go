@@ -9,6 +9,7 @@ package store
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -162,10 +163,22 @@ func (v Version) Redacted() Version {
 }
 
 // Store is the bbolt-backed configuration store.
+//
+// The database is opened for the duration of each operation rather than held
+// open for the life of the process. bbolt takes an exclusive lock on the file,
+// and the store now lives in one per-user directory instead of one per project
+// — so holding it would mean a second Deadlocker could not start at all. These
+// are settings and scenario revisions: a handful of reads and the occasional
+// write, where the cost of opening a file is not worth a restriction that
+// large.
 type Store struct {
-	db   *bolt.DB
 	path string
 }
+
+// openTimeout bounds the wait for another instance's write to finish. bbolt
+// blocks on the file lock; without a timeout a stuck process would hang this
+// one indefinitely.
+const openTimeout = 5 * time.Second
 
 // Open creates or opens the database at path, creating parent directories.
 func Open(path string) (*Store, error) {
@@ -174,13 +187,9 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("create state directory: %w", err)
 		}
 	}
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	s := &Store{db: db, path: path}
+	s := &Store{path: path}
 
-	if err := db.Update(func(tx *bolt.Tx) error {
+	if err := s.update(func(tx *bolt.Tx) error {
 		for _, b := range [][]byte{bucketConfig, bucketMeta, bucketScenarios} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
@@ -198,13 +207,43 @@ func Open(path string) (*Store, error) {
 		}
 		return nil
 	}); err != nil {
-		db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// open takes the file lock, waiting a bounded time for whoever has it.
+func (s *Store) open() (*bolt.DB, error) {
+	db, err := bolt.Open(s.path, 0o600, &bolt.Options{Timeout: openTimeout})
+	if err != nil {
+		if errors.Is(err, bolt.ErrTimeout) {
+			return nil, fmt.Errorf("%s is busy: another Deadlocker is writing to it", s.path)
+		}
+		return nil, fmt.Errorf("open %s: %w", s.path, err)
+	}
+	return db, nil
+}
+
+func (s *Store) update(fn func(*bolt.Tx) error) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.Update(fn)
+}
+
+func (s *Store) view(fn func(*bolt.Tx) error) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.View(fn)
+}
+
+// Close exists so callers can defer it; nothing is held open between calls.
+func (s *Store) Close() error { return nil }
 
 // Path is the database location, shown in the settings UI.
 func (s *Store) Path() string { return s.path }
@@ -232,7 +271,7 @@ func (s *Store) Current() (Config, uint64, error) {
 		cfg Config
 		ver uint64
 	)
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		raw := tx.Bucket(bucketMeta).Get(keyCurrent)
 		if raw == nil {
 			cfg = DefaultConfig()
@@ -263,7 +302,7 @@ func (s *Store) Current() (Config, uint64, error) {
 func (s *Store) Save(cfg Config, note string) (Version, error) {
 	cfg.Normalise()
 	var saved Version
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketConfig)
 		next := uint64(1)
 		if raw := tx.Bucket(bucketMeta).Get(keyCurrent); raw != nil {
@@ -281,7 +320,7 @@ func (s *Store) Save(cfg Config, note string) (Version, error) {
 func (s *Store) Versions(limit int) ([]Version, error) {
 	var out []Version
 	var current uint64
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		if raw := tx.Bucket(bucketMeta).Get(keyCurrent); raw != nil {
 			current = binary.BigEndian.Uint64(raw)
 		}
@@ -311,7 +350,7 @@ func (s *Store) Versions(limit int) ([]Version, error) {
 // append-only: restoring never rewrites or deletes what came after it.
 func (s *Store) Restore(version uint64) (Version, error) {
 	var restored Version
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		payload := tx.Bucket(bucketConfig).Get(encodeVersion(version))
 		if payload == nil {
 			return fmt.Errorf("configuration version %d does not exist", version)

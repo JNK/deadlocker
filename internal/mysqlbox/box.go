@@ -58,18 +58,54 @@ var serverArgs = []string{
 	// to the value and then fails to open /dev/stderr.err.
 }
 
-// serverArgsFor returns the arguments for one image, adding the flags that
-// only newer servers understand.
-func serverArgsFor(image string) []string {
+// serverArgsFor returns the arguments for one spec, adding the flags that only
+// newer servers understand and anything the spec asks to be set at startup.
+func serverArgsFor(spec Spec) []string {
 	args := append([]string(nil), serverArgs...)
-	if atLeast(image, 8, 0) {
+	if atLeast(spec.Image, 8, 0) {
 		// Renamed from innodb_log_file_size in 8.0.30. 5.7 aborts on it.
 		args = append(args, "--innodb-redo-log-capacity=16777216")
 	} else {
 		args = append(args, "--innodb-log-file-size=16M")
 	}
+	if spec.DeadlockDetect != nil && !*spec.DeadlockDetect {
+		args = append(args, "--innodb-deadlock-detect=OFF")
+	}
 	return args
 }
+
+// Spec is what a scenario needs from a server. Anything here that cannot be set
+// per session has to be baked into the container, because the alternative is a
+// run reaching over and changing it for every other run sharing the server.
+type Spec struct {
+	Image string
+	// DeadlockDetect is the one setting a scenario can ask for that MySQL only
+	// exposes globally. A run that turned it off with SET GLOBAL turned it off
+	// for every concurrent run on the same container -- silently converting
+	// their deadlocks into lock waits that sit there until they time out. So a
+	// scenario that wants it off gets a server of its own instead.
+	DeadlockDetect *bool
+}
+
+// Key identifies the container a spec needs. Only settings that cannot be
+// varied per session are part of it, so the common case still shares one
+// container per image.
+func (s Spec) Key() string {
+	if s.DeadlockDetect != nil && !*s.DeadlockDetect {
+		return s.image() + "#deadlock-detect=off"
+	}
+	return s.image()
+}
+
+func (s Spec) image() string {
+	if s.Image == "" {
+		return DefaultImage
+	}
+	return s.Image
+}
+
+// DefaultImage is used when a scenario names none.
+const DefaultImage = "mysql:8.4"
 
 // atLeast reports whether an image tag names a MySQL at or above major.minor.
 // An unparseable tag is treated as current, since that is what "mysql:latest"
@@ -94,6 +130,7 @@ func atLeast(image string, major, minor int) bool {
 // Box is a running MySQL container plus the proxy-free admin connection used
 // for setup, teardown and lock introspection.
 type Box struct {
+	Spec        Spec
 	Image       string
 	ContainerID string
 	HostPort    string
@@ -101,6 +138,9 @@ type Box struct {
 
 	admin *sql.DB
 }
+
+// Key is the pool key this box was started for.
+func (b *Box) Key() string { return b.Spec.Key() }
 
 // Addr is the host-side address of the container's MySQL port.
 func (b *Box) Addr() string { return "127.0.0.1:" + b.HostPort }
@@ -174,21 +214,29 @@ func SilenceExpectedDriverNoise() error {
 	return mysql.SetLogger(quietDriverLogger{out: log.New(os.Stderr, "[mysql] ", log.LstdFlags)})
 }
 
-// Pool lazily starts and reuses one Box per image.
+// Pool lazily starts and reuses one Box per spec.
 type Pool struct {
 	docker *dockerctl.Client
 
 	mu    sync.Mutex
 	boxes map[string]*Box
-	// starting guards against two runs racing to create the same image's box.
+	// starting guards against two runs racing to create the same box.
 	starting map[string]chan struct{}
 
-	onLog   func(image string, line dockerctl.LogLine)
+	// onLog is called with the pool key of the box a line came from, not with
+	// its image: two boxes can share an image, and a run must only be shown the
+	// log of the server it is actually talking to.
+	onLog   func(key string, line dockerctl.LogLine)
 	logCtx  context.Context
 	logStop context.CancelFunc
+
+	// owner identifies this process on the containers it starts, and ownerDir is
+	// where the liveness locks live.
+	owner    *Owner
+	ownerDir string
 }
 
-func NewPool(dc *dockerctl.Client, onLog func(image string, line dockerctl.LogLine)) *Pool {
+func NewPool(dc *dockerctl.Client, onLog func(key string, line dockerctl.LogLine)) *Pool {
 	ctx, stop := context.WithCancel(context.Background())
 	return &Pool{
 		docker:   dc,
@@ -200,21 +248,62 @@ func NewPool(dc *dockerctl.Client, onLog func(image string, line dockerctl.LogLi
 	}
 }
 
-// Get returns a ready Box for the image, starting the container if needed.
-// onProgress receives human-readable status while pulling and booting.
-func (p *Pool) Get(ctx context.Context, image string, onProgress func(string)) (*Box, error) {
-	if image == "" {
-		image = "mysql:8.4"
-	}
+// Own records this process as the owner of every container the pool starts.
+// Without it the pool still works; it just cannot tell its containers apart
+// from anyone else's, so it reaps conservatively.
+func (p *Pool) Own(o *Owner, dir string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.owner, p.ownerDir = o, dir
+}
+
+// Phases a container goes through before it can be used. They are the four
+// things that actually take time, and naming them is the difference between
+// "the button is stuck" and "it is pulling a 500 MB image".
+const (
+	PhaseCheck   = "check"   // asking Docker whether the image is here
+	PhasePull    = "pull"    // fetching it from the registry
+	PhaseCreate  = "create"  // creating and starting the container
+	PhaseBoot    = "boot"    // waiting for mysqld to answer
+	PhaseReady   = "ready"   // done
+	PhaseWaiting = "waiting" // another run is already starting this image
+)
+
+// Progress is one observation about how far a container is from usable.
+type Progress struct {
+	Phase  string
+	Detail string
+	// Percent is 0..100 where it can be measured, and -1 where it cannot --
+	// waiting for mysqld to boot has no denominator.
+	Percent int
+}
+
+// Get returns a ready Box for the image with default settings.
+func (p *Pool) Get(ctx context.Context, image string, onProgress func(Progress)) (*Box, error) {
+	return p.Acquire(ctx, Spec{Image: image}, onProgress)
+}
+
+// Acquire returns a ready Box for the spec, starting the container if needed.
+// onProgress receives status while pulling and booting.
+func (p *Pool) Acquire(ctx context.Context, spec Spec, onProgress func(Progress)) (*Box, error) {
+	spec.Image = spec.image()
+	key := spec.Key()
 	for {
 		p.mu.Lock()
-		if b, ok := p.boxes[image]; ok {
+		if b, ok := p.boxes[key]; ok {
 			p.mu.Unlock()
 			return b, nil
 		}
-		if ch, ok := p.starting[image]; ok {
-			// Someone else is booting this image; wait and re-check.
+		if ch, ok := p.starting[key]; ok {
+			// Someone else is booting this box; wait and re-check.
 			p.mu.Unlock()
+			if onProgress != nil {
+				onProgress(Progress{
+					Phase:   PhaseWaiting,
+					Detail:  "another run is already starting " + spec.Image,
+					Percent: -1,
+				})
+			}
 			select {
 			case <-ch:
 				continue
@@ -223,15 +312,15 @@ func (p *Pool) Get(ctx context.Context, image string, onProgress func(string)) (
 			}
 		}
 		ch := make(chan struct{})
-		p.starting[image] = ch
+		p.starting[key] = ch
 		p.mu.Unlock()
 
-		b, err := p.start(ctx, image, onProgress)
+		b, err := p.start(ctx, spec, onProgress)
 
 		p.mu.Lock()
-		delete(p.starting, image)
+		delete(p.starting, key)
 		if err == nil {
-			p.boxes[image] = b
+			p.boxes[key] = b
 		}
 		p.mu.Unlock()
 		close(ch)
@@ -247,29 +336,38 @@ func (p *Pool) emulated(ctx context.Context, image string) bool {
 	return imageArch != "" && hostArch != "" && imageArch != hostArch
 }
 
-func (p *Pool) start(ctx context.Context, image string, onProgress func(string)) (*Box, error) {
-	progress := func(format string, args ...any) {
+func (p *Pool) start(ctx context.Context, spec Spec, onProgress func(Progress)) (*Box, error) {
+	image, key := spec.Image, spec.Key()
+	emit := func(phase string, percent int, format string, args ...any) {
 		if onProgress != nil {
-			onProgress(fmt.Sprintf(format, args...))
+			onProgress(Progress{Phase: phase, Detail: fmt.Sprintf(format, args...), Percent: percent})
 		}
 	}
+	progress := func(format string, args ...any) { emit(PhaseBoot, -1, format, args...) }
 
-	progress("checking image %s", image)
-	if err := p.docker.PullImage(ctx, image, func(s string) { progress("pull: %s", s) }); err != nil {
+	emit(PhaseCheck, -1, "checking for %s", image)
+	if err := p.docker.PullImage(ctx, image, func(pp dockerctl.PullProgress) {
+		emit(PhasePull, pp.Percent, "%s", describePull(image, pp))
+	}); err != nil {
 		return nil, fmt.Errorf("pull image: %w", err)
 	}
 
-	progress("creating container")
+	emit(PhaseCreate, -1, "creating the container")
 	id, err := p.docker.CreateContainer(ctx, dockerctl.CreateConfig{
 		Image: image,
-		Cmd:   serverArgsFor(image),
+		Cmd:   serverArgsFor(spec),
 		Env: []string{
 			"MYSQL_ROOT_PASSWORD=" + RootPassword,
 			// Allow root from any host: the proxy connects from the host
 			// network, not from localhost inside the container.
 			"MYSQL_ROOT_HOST=%",
 		},
-		Labels:      map[string]string{LabelKey: LabelValue, "io.jnk.deadlocker.image": image},
+		Labels: map[string]string{
+			LabelKey:                  LabelValue,
+			LabelOwner:                p.owner.ID(),
+			"io.jnk.deadlocker.image": image,
+			"io.jnk.deadlocker.spec":  key,
+		},
 		ExposedPort: containerPort,
 		HostPort:    "", // let Docker pick a free ephemeral port
 		// A tmpfs data directory makes first boot noticeably faster and leaves
@@ -297,14 +395,14 @@ func (p *Pool) start(ctx context.Context, image string, onProgress func(string))
 		return nil, fmt.Errorf("container %s exposed no host port for %s", id[:12], containerPort)
 	}
 
-	box := &Box{Image: image, ContainerID: id, HostPort: port, StartedAt: time.Now()}
+	box := &Box{Spec: spec, Image: image, ContainerID: id, HostPort: port, StartedAt: time.Now()}
 
 	// Start following the container log before waiting for readiness so boot
 	// output (and any startup failure) is visible in the UI.
 	if p.onLog != nil {
 		go func() {
 			_ = p.docker.StreamLogs(p.logCtx, id, time.Time{}, func(l dockerctl.LogLine) {
-				p.onLog(image, l)
+				p.onLog(key, l)
 			})
 		}()
 	}
@@ -321,7 +419,7 @@ func (p *Pool) start(ctx context.Context, image string, onProgress func(string))
 		progress("%s runs under emulation on this machine; allowing %s to start", image, ready)
 	}
 
-	progress("waiting for mysqld on %s", box.Addr())
+	emit(PhaseBoot, -1, "waiting for mysqld on %s", box.Addr())
 	db, err := waitReady(ctx, box, ready, progress, func() error {
 		// A container that has exited is never going to answer, and the reason
 		// is already in its log. Waiting out the full timeout to report "dial
@@ -339,8 +437,45 @@ func (p *Pool) start(ctx context.Context, image string, onProgress func(string))
 		return nil, err
 	}
 	box.admin = db
-	progress("mysql ready on %s", box.Addr())
+	emit(PhaseReady, 100, "mysql ready on %s", box.Addr())
 	return box, nil
+}
+
+// describePull renders aggregated pull progress as a sentence. The layer count
+// is worth carrying: it is the difference between "this is nearly done" and
+// "this is the first of fourteen".
+func describePull(image string, pp dockerctl.PullProgress) string {
+	switch pp.Phase {
+	case "downloading":
+		s := fmt.Sprintf("downloading %s", image)
+		if pp.Total > 0 {
+			s += fmt.Sprintf(" — %s of %s", humanBytes(pp.Current), humanBytes(pp.Total))
+		}
+		if pp.Layers > 0 {
+			s += fmt.Sprintf(" (%d layers)", pp.Layers)
+		}
+		return s
+	case "extracting":
+		s := "extracting layers"
+		if pp.Layers > 0 {
+			s = fmt.Sprintf("extracting layers (%d of %d done)", pp.Complete, pp.Layers)
+		}
+		return s
+	}
+	return strings.TrimSpace(pp.Line)
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // lastErrorLines pulls the tail of a dead container's log, so the reason it
@@ -468,17 +603,29 @@ func (p *Pool) Close() error {
 }
 
 // ReapStale removes containers left behind by a previous process that exited
-// without cleaning up.
-func (p *Pool) ReapStale(ctx context.Context) (int, error) {
-	ids, err := p.docker.ListByLabel(ctx, LabelKey, LabelValue)
+// without cleaning up, and returns how many went and how many were left alone.
+//
+// Containers belonging to another Deadlocker that is still running are left
+// alone. Reaping those was a foot-gun with teeth: opening a second instance, or
+// running `deadlocker run` while the UI was up, deleted the MySQL the first one
+// was in the middle of using.
+func (p *Pool) ReapStale(ctx context.Context) (removed int, kept int, err error) {
+	containers, err := p.docker.ListByLabel(ctx, LabelKey, LabelValue)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	n := 0
-	for _, id := range ids {
-		if err := p.docker.RemoveContainer(ctx, id); err == nil {
-			n++
+	for _, c := range containers {
+		owner := c.Labels[LabelOwner]
+		// Our own containers are not stale, and another live instance's are not
+		// ours to remove. Anything else -- no owner, or an owner that has
+		// exited -- is litter.
+		if owner != "" && (owner == p.owner.ID() || ownerAlive(p.ownerDir, owner)) {
+			kept++
+			continue
+		}
+		if rmErr := p.docker.RemoveContainer(ctx, c.ID); rmErr == nil {
+			removed++
 		}
 	}
-	return n, nil
+	return removed, kept, nil
 }

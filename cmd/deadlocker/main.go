@@ -68,7 +68,7 @@ func run() error {
 	var (
 		addr      = flag.String("addr", "127.0.0.1:8899", "address to serve the UI on")
 		casesDir  = flag.String("cases", "cases", "directory containing scenario YAML files")
-		statePath = flag.String("state", "", "path to the bbolt state file (default: <cases>/../.deadlocker/state.db)")
+		statePath = flag.String("state", "", "path to the bbolt state file (default: ~/.config/deadlocker/state.db)")
 		settle    = flag.Duration("settle", 400*time.Millisecond, "how long a statement may run before it is reported as blocked")
 		prewarm   = flag.String("prewarm", "", "start this MySQL image at boot; overrides the setting in the UI")
 		keepStale = flag.Bool("keep-stale", false, "do not remove containers left behind by a previous run")
@@ -95,9 +95,9 @@ func run() error {
 		log.Printf("wrote %d built-in scenario(s) into %s", len(res.Written), absCases)
 	}
 
-	dbPath := *statePath
-	if dbPath == "" {
-		dbPath = filepath.Join(filepath.Dir(absCases), ".deadlocker", "state.db")
+	dbPath, stateDir, err := resolveState(*statePath, absCases)
+	if err != nil {
+		return err
 	}
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -105,6 +105,15 @@ func run() error {
 	}
 	defer st.Close()
 	log.Printf("configuration stored in %s", dbPath)
+
+	// Claim the containers this process starts, so another instance can tell
+	// them apart from ones it may clean up.
+	owner, err := mysqlbox.NewOwner(stateDir)
+	if err != nil {
+		log.Printf("could not register container ownership (%v); containers will be reaped conservatively", err)
+	} else {
+		defer owner.Close()
+	}
 
 	if err := mysqlbox.SilenceExpectedDriverNoise(); err != nil {
 		return err
@@ -133,19 +142,25 @@ func run() error {
 	// The manager is created before the pool so container logs can be routed
 	// into the runs that are watching them.
 	var mgr *engine.Manager
-	pool := mysqlbox.NewPool(docker, func(image string, line dockerctl.LogLine) {
+	pool := mysqlbox.NewPool(docker, func(key string, line dockerctl.LogLine) {
 		if mgr != nil {
-			mgr.OnDockerLog(image, line)
+			mgr.OnDockerLog(key, line)
 		}
 	})
+	pool.Own(owner, stateDir)
 	mgr = engine.NewManager(pool, *settle)
 
 	if !*keepStale {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if n, err := pool.ReapStale(ctx); err != nil {
+		removed, kept, err := pool.ReapStale(ctx)
+		switch {
+		case err != nil:
 			log.Printf("could not check for stale containers: %v", err)
-		} else if n > 0 {
-			log.Printf("removed %d stale container(s) from a previous session", n)
+		case removed > 0:
+			log.Printf("removed %d stale container(s) from a previous session", removed)
+		}
+		if kept > 0 {
+			log.Printf("left %d container(s) alone: another Deadlocker is still using them", kept)
 		}
 		cancel()
 	}
@@ -206,7 +221,7 @@ func run() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 			log.Printf("pre-warming %s…", image)
-			if _, err := pool.Get(ctx, image, func(s string) { log.Printf("  %s", s) }); err != nil {
+			if _, err := pool.Get(ctx, image, func(p mysqlbox.Progress) { log.Printf("  %s", p.Detail) }); err != nil {
 				// Not fatal: every run starts its own container on demand, so a
 				// failed pre-warm costs time on the first run and nothing else.
 				log.Printf("pre-warm failed, will start on demand instead: %v", err)

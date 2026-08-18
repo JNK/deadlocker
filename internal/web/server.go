@@ -5,7 +5,6 @@
 package web
 
 import (
-	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"hash/fnv"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -205,6 +205,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /run/{id}/step", s.handleStep)
 	mux.HandleFunc("POST /run/{id}/play", s.handlePlay)
 	mux.HandleFunc("POST /run/{id}/snapshot", s.handleSnapshot)
+	// The SQL console: statements typed at a live run, either on an actor's own
+	// connection or on a standalone one.
+	mux.HandleFunc("POST /run/{id}/console", s.handleConsole)
+	mux.HandleFunc("POST /run/{id}/console/session", s.handleOpenSession)
+	mux.HandleFunc("POST /run/{id}/console/session/{session}/close", s.handleCloseSession)
 	mux.HandleFunc("POST /run/{id}/stop", s.handleStopRun)
 	mux.HandleFunc("POST /run/{id}/close", s.handleCloseRun)
 	mux.HandleFunc("GET /run/{id}/state", s.handleRunState)
@@ -701,18 +706,15 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startAndRespond(w http.ResponseWriter, r *http.Request, c *casedef.Case, wantJSON bool) {
-	// Container pull and MySQL boot can take a while on the very first run.
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
-	defer cancel()
-
-	run, err := s.mgr.Start(ctx, c)
+	// The container is pulled and booted in the background. Waiting for it here
+	// was the whole of the delay between pressing Run and anything happening:
+	// on a cold image that is minutes of a page that has not navigated yet, with
+	// the progress being reported to a run nobody can see. The run page opens
+	// immediately instead and watches it come up.
+	run, err := s.mgr.StartAsync(c)
 	if err != nil {
 		if wantJSON {
-			id := ""
-			if run != nil {
-				id = run.ID
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "run_id": id})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
 		pd := s.base("Run failed", "library")
@@ -793,6 +795,10 @@ func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
 		return
 	}
+	if err := run.WaitReady(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	res, err := run.Step(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusOK, stepErrorPayload(err))
@@ -811,6 +817,13 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.mgr.Get(r.PathValue("id"))
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	// Play is often pressed the instant a run is created — the builder and the
+	// playground do exactly that — so it waits for the container rather than
+	// refusing a run that is merely still starting.
+	if err := run.WaitReady(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	advanced := 0
@@ -859,6 +872,74 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := run.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "locks": snap})
+}
+
+// handleConsole runs one typed statement against a live run.
+//
+// The target is either an actor — where the statement joins that session's
+// transaction and takes locks under its name — or a standalone connection
+// opened from the console. Both are real sessions on the same scratch database,
+// so whatever the statement does shows up in the lock tables like anything else.
+func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	var req struct {
+		Session string `json:"session"`
+		SQL     string `json:"sql"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := run.WaitReady(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	entry, err := run.Console(r.Context(), req.Session, req.SQL)
+	if err != nil {
+		payload := map[string]any{"ok": false, "error": err.Error()}
+		var blocked *engine.ActorBlockedError
+		if errors.As(err, &blocked) {
+			payload["blocked_actor"] = blocked.Actor
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "entry": entry})
+}
+
+func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	if err := run.WaitReady(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	session, err := run.OpenSession(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session})
+}
+
+func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown run"})
+		return
+	}
+	if err := run.CloseSession(r.PathValue("session")); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleStopRun halts a run without tearing it down. When the assistant is the
@@ -956,12 +1037,34 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	ch, backlog, cancel := run.Bus.Subscribe(since)
 	defer cancel()
 
+	// The global activity feed rides along on this stream. A browser allows six
+	// connections per origin over HTTP/1.1 and an SSE stream holds one for as
+	// long as the page is open; at two streams per run page, three open runs
+	// used up the budget and everything else — starting a run, stepping one,
+	// even loading a page — silently queued behind them.
+	activityCh, _, cancelActivity := s.api.Hub().Subscribe(math.MaxInt)
+	defer cancelActivity()
+
 	send := func(ev engine.Event) bool {
 		payload, err := json.Marshal(ev)
 		if err != nil {
 			return true
 		}
 		if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Seq, ev.Type, payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// Activity frames carry no id: the run stream's own sequence owns that, and
+	// a reconnect resumes the run, not the feed.
+	sendActivity := func(a agentapi.Activity) bool {
+		payload, err := json.Marshal(a)
+		if err != nil {
+			return true
+		}
+		if _, err := fmt.Fprintf(w, "event: activity\ndata: %s\n\n", payload); err != nil {
 			return false
 		}
 		flusher.Flush()
@@ -989,6 +1092,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !send(ev) {
+				return
+			}
+		case a, open := <-activityCh:
+			if !open {
+				// Nil it out rather than selecting on a closed channel, which is
+				// always ready and would spin this loop.
+				activityCh = nil
+				continue
+			}
+			if !sendActivity(a) {
 				return
 			}
 		case <-keepalive.C:

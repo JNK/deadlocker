@@ -162,17 +162,30 @@ func runCLI(args []string) error {
 	}
 
 	var mgr *engine.Manager
-	pool := mysqlbox.NewPool(docker, func(image string, line dockerctl.LogLine) {
+	pool := mysqlbox.NewPool(docker, func(key string, line dockerctl.LogLine) {
 		if mgr != nil {
-			mgr.OnDockerLog(image, line)
+			mgr.OnDockerLog(key, line)
 		}
 	})
+
+	// The CLI claims its containers too. Running the suite while the UI is open
+	// is an ordinary thing to do, and it used to delete the UI's MySQL.
+	if dir, err := configDir(); err == nil {
+		if owner, err := mysqlbox.NewOwner(dir); err == nil {
+			defer owner.Close()
+			pool.Own(owner, dir)
+		}
+	}
 	mgr = engine.NewManager(pool, *settle)
 
 	if !*keepStale {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if n, _ := pool.ReapStale(ctx); n > 0 {
-			fmt.Fprintf(progress, "removed %d stale container(s)\n", n)
+		removed, kept, _ := pool.ReapStale(ctx)
+		if removed > 0 {
+			fmt.Fprintf(progress, "removed %d stale container(s)\n", removed)
+		}
+		if kept > 0 {
+			fmt.Fprintf(progress, "left %d container(s) belonging to a running Deadlocker\n", kept)
 		}
 		cancel()
 	}

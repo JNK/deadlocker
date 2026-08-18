@@ -3423,3 +3423,135 @@ body.is-predicting .step-card.status-pending .step-note { display: none; }
   cursor: pointer;
 }
 .tag-more:hover { color: var(--text); border-color: var(--text-3); }
+
+/* ---------------------------------------------- bringing a container up
+
+   The first run of an image pulls hundreds of megabytes and then waits for
+   MySQL to initialise a data directory. That is the slowest thing this tool
+   does, and it used to happen behind a button that simply looked broken. */
+
+.prepare {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+.prepare-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.prepare-head strong { font-size: 13.5px; }
+.prepare-head .mono { margin-left: auto; color: var(--text-2); font-size: 12px; }
+.prepare-bar {
+  margin-top: 10px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  overflow: hidden;
+}
+.prepare-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .25s ease;
+}
+/* A phase with no denominator gets a moving bar rather than an invented
+   percentage: "waiting for mysqld" cannot honestly be 40% done. */
+.prepare.is-indeterminate .prepare-bar > span {
+  width: 35%;
+  animation: prepare-sweep 1.4s ease-in-out infinite;
+}
+@keyframes prepare-sweep {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+.prepare-note { margin: 8px 0 0; font-size: 12px; color: var(--text-2); }
+.prepare-note:empty { display: none; }
+
+/* A run that never started keeps the banner and says why, rather than leaving
+   an empty timeline and a disabled button to be interpreted. */
+.prepare.is-error { border-color: var(--danger); background: var(--danger-soft); }
+.prepare.is-error .spinner { display: none; }
+.prepare.is-error .prepare-bar { display: none; }
+.prepare.is-error .prepare-head .muted { color: var(--text); font-family: var(--mono); font-size: 12px; }
+
+.spinner {
+  width: 13px; height: 13px; flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+
+/* ------------------------------------------------------------ SQL console */
+
+/* The console is a column: a transcript that scrolls above an input that stays
+   put. It has to stay hidden when another tab is selected, so it only becomes
+   a flex column once it is the active panel. */
+.dock-panel-console.is-active { display: flex; flex-direction: column; min-height: 0; }
+.dock-toolbar-label { font-size: 12px; color: var(--text-2); }
+
+.console-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-size: 13px;
+}
+.console-entry-row {
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  padding-left: 10px;
+}
+.console-entry-row:last-child { border-bottom: 0; }
+.console-entry-row.accent-blue { border-left-color: var(--a-blue); }
+.console-entry-row.accent-amber { border-left-color: var(--a-amber); }
+.console-entry-row.accent-violet { border-left-color: var(--a-violet); }
+.console-entry-row.accent-teal { border-left-color: var(--a-teal); }
+.console-entry-row.accent-rose { border-left-color: var(--a-rose); }
+.console-entry-row.status-blocked { background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.console-entry-row.status-error { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+
+.console-entry-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.console-who { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; }
+.console-entry-row pre.sql { margin: 0 0 8px; }
+
+.console-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.console-prompt {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.console-prompt.accent-blue { color: var(--a-blue); }
+.console-prompt.accent-amber { color: var(--a-amber); }
+.console-prompt.accent-violet { color: var(--a-violet); }
+.console-prompt.accent-teal { color: var(--a-teal); }
+.console-prompt.accent-rose { color: var(--a-rose); }
+.console-entry textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.console-entry textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}

@@ -16,7 +16,10 @@
           {{if .Run.Isolation}}<span class="chip">{{.Run.Isolation}}</span>{{end}}
           <span class="chip">lock wait {{.Run.LockWaitTimeout}}s</span>
           <span class="chip mono" title="Scratch database, dropped when the run closes">{{.Run.Database}}</span>
-          <span class="chip mono" title="Host address of the MySQL container">{{.Run.Addr}}</span>
+          <!-- The container address is not known until it has one, which is
+               after the image has been pulled and the container started. -->
+          <span class="chip mono" data-run-addr title="Host address of the MySQL container"
+                {{if not .Run.Addr}}hidden{{end}}>{{.Run.Addr}}</span>
         </div>
       </div>
 
@@ -77,6 +80,20 @@
 
     <div class="toast" id="toast" hidden></div>
 
+    <!-- Bringing a container up is the slowest thing this tool does, and on a
+         cold image it is by far the slowest. It reports what it is doing here
+         rather than leaving a button looking broken. -->
+    <div class="prepare" id="prepare" hidden>
+      <div class="prepare-head">
+        <span class="spinner" aria-hidden="true"></span>
+        <strong id="prepare-phase">Starting the run</strong>
+        <span class="muted" id="prepare-detail"></span>
+        <span class="mono" id="prepare-percent"></span>
+      </div>
+      <div class="prepare-bar"><span id="prepare-fill"></span></div>
+      <p class="prepare-note" id="prepare-note"></p>
+    </div>
+
     <div class="run-split">
       <section class="lanes-wrap" id="lanes-wrap">
         <div class="lanes" style="--lane-count: {{len .Run.Actors}}">
@@ -86,7 +103,8 @@
             <div class="lane-head accent-{{.Accent}}" data-actor-head="{{.ID}}">
               <span class="actor-dot"></span>
               <span class="lane-head-name">{{.Name}}</span>
-              <span class="lane-head-conn mono" title="MySQL CONNECTION_ID() — proxy on {{.ProxyAddr}}">#{{.ConnID}}</span>
+              <span class="lane-head-conn mono" data-actor-conn="{{.ID}}"
+                    title="MySQL CONNECTION_ID()" {{if not .ConnID}}hidden{{end}}>#{{.ConnID}}</span>
               <span class="badge-trx" data-actor-trx="{{.ID}}" hidden title="This session has an open transaction">TRX</span>
             </div>
             {{end}}
@@ -128,6 +146,10 @@
         <div class="dock-tabs" role="tablist">
           <button class="dock-tab is-active" data-tab="step" type="button">Step</button>
           <button class="dock-tab" data-tab="locks" type="button">Locks <span class="tab-count" data-count="locks"></span></button>
+          {{if not .Archived}}
+          <button class="dock-tab" data-tab="console" type="button"
+                  title="Type SQL at this run, as an actor or on a connection of your own">SQL <span class="tab-count" data-count="console"></span></button>
+          {{end}}
           <button class="dock-tab" data-tab="wire" type="button">Wire <span class="tab-count" data-count="wire"></span></button>
           <button class="dock-tab" data-tab="docker" type="button">Container log <span class="tab-count" data-count="docker"></span></button>
           <button class="dock-tab" data-tab="deadlock" type="button">Deadlock report <span class="tab-dot" data-dot="deadlock" hidden></span></button>
@@ -160,6 +182,31 @@
             <div id="locks-trx"></div>
           </div>
 
+          {{if not .Archived}}
+          <!-- The console. Which connection a statement runs on is the whole
+               question, so the target sits first and stays visible. -->
+          <div class="dock-panel dock-panel-console" data-panel="console">
+            <div class="dock-toolbar">
+              <label class="dock-toolbar-label" for="console-target">run on</label>
+              <select id="console-target"></select>
+              <button class="btn btn-ghost btn-sm" id="console-new" type="button"
+                      title="Open another connection to the same scratch database, outside the scenario">New connection</button>
+              <button class="btn btn-ghost btn-sm" id="console-close" type="button" hidden
+                      title="Disconnect this session, rolling back anything it holds">Disconnect</button>
+              <div class="dock-toolbar-spacer"></div>
+              <span class="muted" id="console-hint"></span>
+              <button class="btn btn-ghost btn-sm" id="console-clear" type="button">Clear view</button>
+            </div>
+            <div id="console-log" class="console-log"></div>
+            <form class="console-entry" id="console-form">
+              <span class="console-prompt" id="console-prompt" aria-hidden="true"></span>
+              <textarea id="console-sql" rows="2" spellcheck="false" autocomplete="off"
+                        placeholder="SELECT * FROM … FOR UPDATE"></textarea>
+              <button class="btn btn-primary btn-sm" id="console-run" type="submit">Run</button>
+            </form>
+          </div>
+          {{end}}
+
           <div class="dock-panel" data-panel="wire">
             <div class="dock-toolbar">
               <select id="wire-actor"><option value="">all actors</option>
@@ -167,6 +214,7 @@
               </select>
               <select id="wire-step"><option value="">all steps</option>
                 <option value="0">session setup</option>
+                <option value="console">console</option>
                 {{range .Steps}}<option value="{{.Index}}">step {{.Index}} · {{.Label}}</option>{{end}}
               </select>
               <label class="switch"><input type="checkbox" id="wire-hex"> show bytes</label>
@@ -210,6 +258,9 @@
 <script>
   window.DL_SETTLE_MS = {{.Settle}};
   window.DL_ARCHIVED = {{if .Archived}}true{{else}}false{{end}};
+  // A live run's own stream carries the activity feed too, so this page holds
+  // one long-lived connection rather than two.
+  window.DL_ACTIVITY_VIA_RUN = {{if .Archived}}false{{else}}true{{end}};
   window.DL_ARCHIVED_LOCKS = {{if .ArchivedLocks}}{{json .ArchivedLocks}}{{else}}null{{end}};
 </script>
 <script src="/static/app.js"></script>

@@ -157,8 +157,17 @@
       var status = state ? state.status : 'preparing';
 
       if (el.statusEl) {
-        el.statusEl.textContent = status;
+        // While the container comes up, the phase is more use than the word
+        // "preparing" — it is the difference between a 400 MB pull and a boot.
+        el.statusEl.textContent = status === 'preparing' && state && state.prepare
+          ? state.prepare.detail || status
+          : status;
         el.statusEl.className = 'run-bar-status status-' + status;
+      }
+      // A run that failed to start says so once, where the pane can see it.
+      if (state && state.status === 'failed' && state.error && !run.reported) {
+        run.reported = true;
+        note('error', state.error);
       }
       if (el.progressEl) {
         el.progressEl.textContent = state ? state.cursor + '/' + state.total : '—';

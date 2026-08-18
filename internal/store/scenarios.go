@@ -82,7 +82,7 @@ func (s *Store) RecordScenario(id, name, path, source, note string) (ScenarioVer
 		saved   ScenarioVersion
 		written bool
 	)
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b, err := scenarioBucket(tx, id, true)
 		if err != nil {
 			return err
@@ -120,7 +120,7 @@ func (s *Store) RecordScenario(id, name, path, source, note string) (ScenarioVer
 // string when that is not known.
 func (s *Store) ScenarioVersions(id, current string, limit int) ([]ScenarioVersion, error) {
 	var out []ScenarioVersion
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		b, err := scenarioBucket(tx, id, false)
 		if err != nil || b == nil {
 			return err
@@ -157,7 +157,7 @@ func (s *Store) ScenarioVersions(id, current string, limit int) ([]ScenarioVersi
 // ScenarioVersion returns one revision.
 func (s *Store) ScenarioVersion(id string, version uint64) (ScenarioVersion, error) {
 	var out ScenarioVersion
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		b, err := scenarioBucket(tx, id, false)
 		if err != nil {
 			return err
@@ -178,7 +178,7 @@ func (s *Store) ScenarioVersion(id string, version uint64) (ScenarioVersion, err
 // listing can show the count without reading every revision.
 func (s *Store) ScenarioVersionCounts() (map[string]int, error) {
 	out := map[string]int{}
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		root := tx.Bucket(bucketScenarios)
 		if root == nil {
 			return nil

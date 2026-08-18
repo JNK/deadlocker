@@ -179,13 +179,36 @@ func (c *Client) HostArch(ctx context.Context) string {
 	return out.Arch
 }
 
-// PullImage pulls an image, reporting progress lines to onStatus. It is a no-op
-// when the image already exists locally.
-func (c *Client) PullImage(ctx context.Context, image string, onStatus func(string)) error {
+// PullProgress is the state of an image pull, aggregated across its layers.
+//
+// Docker reports progress per layer, interleaved: a dozen layers downloading
+// and extracting at once, each with its own byte counts. A person watching a
+// button wants one number, so the counts are summed here and reported as one
+// figure for whichever phase the pull is currently in.
+type PullProgress struct {
+	// Phase is "downloading", "extracting" or "" while the pull is still
+	// resolving the manifest.
+	Phase string
+	// Line is the raw status line, kept for the log.
+	Line string
+	// Layers is how many layers the image has, and Complete how many are done.
+	Layers   int
+	Complete int
+	// Current and Total are bytes for the current phase; Total is 0 until
+	// Docker has announced the sizes.
+	Current int64
+	Total   int64
+	// Percent is Current/Total, or -1 when nothing measurable is happening yet.
+	Percent int
+}
+
+// PullImage pulls an image, reporting aggregated progress. It is a no-op when
+// the image already exists locally.
+func (c *Client) PullImage(ctx context.Context, image string, onProgress func(PullProgress)) error {
 	if c.HasImage(ctx, image) {
 		return nil
 	}
-	err := c.pull(ctx, image, "", onStatus)
+	err := c.pull(ctx, image, "", onProgress)
 	if err == nil || !isNoManifestErr(err) {
 		return err
 	}
@@ -195,10 +218,13 @@ func (c *Client) PullImage(ctx context.Context, image string, onStatus func(stri
 	// every 5.7 scenario would simply fail to start. Docker can run the amd64
 	// build under emulation, which is slow but correct -- and a slow 5.7 run is
 	// worth much more than no 5.7 run.
-	if onStatus != nil {
-		onStatus("no image for this architecture; retrying as linux/amd64 (emulated)")
+	if onProgress != nil {
+		onProgress(PullProgress{
+			Line:    "no image for this architecture; retrying as linux/amd64 (emulated)",
+			Percent: -1,
+		})
 	}
-	return c.pull(ctx, image, "linux/amd64", onStatus)
+	return c.pull(ctx, image, "linux/amd64", onProgress)
 }
 
 // isNoManifestErr reports whether a pull failed because the registry has no
@@ -209,7 +235,7 @@ func isNoManifestErr(err error) bool {
 		strings.Contains(s, "no match for platform")
 }
 
-func (c *Client) pull(ctx context.Context, image, platform string, onStatus func(string)) error {
+func (c *Client) pull(ctx context.Context, image, platform string, onProgress func(PullProgress)) error {
 	name, tag := image, "latest"
 	// Split on the last colon, but only if it is not part of a registry:port.
 	if i := strings.LastIndex(image, ":"); i > strings.LastIndex(image, "/") {
@@ -225,12 +251,18 @@ func (c *Client) pull(ctx context.Context, image, platform string, onStatus func
 	}
 	defer resp.Body.Close()
 
+	agg := newPullAggregator()
 	dec := json.NewDecoder(resp.Body)
 	for {
 		var msg struct {
+			ID       string `json:"id"`
 			Status   string `json:"status"`
 			Progress string `json:"progress"`
-			Error    string `json:"error"`
+			Detail   struct {
+				Current int64 `json:"current"`
+				Total   int64 `json:"total"`
+			} `json:"progressDetail"`
+			Error string `json:"error"`
 		}
 		if err := dec.Decode(&msg); err == io.EOF {
 			return nil
@@ -240,14 +272,94 @@ func (c *Client) pull(ctx context.Context, image, platform string, onStatus func
 		if msg.Error != "" {
 			return fmt.Errorf("pull %s: %s", image, msg.Error)
 		}
-		if onStatus != nil && msg.Status != "" {
-			line := msg.Status
-			if msg.Progress != "" {
-				line += " " + msg.Progress
-			}
-			onStatus(line)
+		if msg.Status == "" {
+			continue
+		}
+		line := msg.Status
+		if msg.Progress != "" {
+			line += " " + msg.Progress
+		}
+		p := agg.record(msg.ID, msg.Status, msg.Detail.Current, msg.Detail.Total)
+		p.Line = line
+		if onProgress != nil {
+			onProgress(p)
 		}
 	}
+}
+
+// pullAggregator turns Docker's per-layer progress stream into one figure.
+type pullAggregator struct {
+	// layers holds the latest byte counts per layer id, per phase.
+	download map[string][2]int64 // id -> {current, total}
+	extract  map[string][2]int64
+	done     map[string]bool
+	phase    string
+}
+
+func newPullAggregator() *pullAggregator {
+	return &pullAggregator{
+		download: map[string][2]int64{},
+		extract:  map[string][2]int64{},
+		done:     map[string]bool{},
+	}
+}
+
+func (a *pullAggregator) record(id, status string, current, total int64) PullProgress {
+	switch {
+	case id == "":
+		// Manifest-level chatter ("Pulling from library/mysql", "Digest: …").
+	case strings.HasPrefix(status, "Downloading"):
+		a.phase = "downloading"
+		a.download[id] = [2]int64{current, total}
+	case strings.HasPrefix(status, "Extracting"):
+		a.phase = "extracting"
+		a.extract[id] = [2]int64{current, total}
+	case status == "Download complete":
+		if d, ok := a.download[id]; ok && d[1] > 0 {
+			a.download[id] = [2]int64{d[1], d[1]}
+		}
+	case status == "Pull complete", status == "Already exists":
+		a.done[id] = true
+		if d, ok := a.download[id]; ok && d[1] > 0 {
+			a.download[id] = [2]int64{d[1], d[1]}
+		}
+		if e, ok := a.extract[id]; ok && e[1] > 0 {
+			a.extract[id] = [2]int64{e[1], e[1]}
+		}
+	}
+
+	counts := a.download
+	if a.phase == "extracting" {
+		counts = a.extract
+	}
+	var cur, tot int64
+	for _, v := range counts {
+		cur += v[0]
+		tot += v[1]
+	}
+
+	// Layers are counted from the download map: every layer that has to be
+	// fetched announces itself there first.
+	layers := len(a.download)
+	if n := len(a.extract); n > layers {
+		layers = n
+	}
+
+	p := PullProgress{
+		Phase:    a.phase,
+		Layers:   layers,
+		Complete: len(a.done),
+		Current:  cur,
+		Total:    tot,
+		Percent:  -1,
+	}
+	if tot > 0 {
+		p.Percent = int(cur * 100 / tot)
+		if p.Percent > 100 {
+			p.Percent = 100
+		}
+	}
+	return p
 }
 
 type CreateConfig struct {
@@ -373,21 +485,23 @@ func (ci *ContainerInspect) HostPort(containerPort string) (string, bool) {
 	return "", false
 }
 
-// ListByLabel returns containers (including stopped ones) carrying label=value.
-func (c *Client) ListByLabel(ctx context.Context, label, value string) ([]string, error) {
+// Container is a container as it appears in a listing.
+type Container struct {
+	ID     string            `json:"Id"`
+	Labels map[string]string `json:"Labels"`
+	Status string            `json:"Status"`
+}
+
+// ListByLabel returns containers (including stopped ones) carrying label=value,
+// with their labels — which is how the caller works out who owns one.
+func (c *Client) ListByLabel(ctx context.Context, label, value string) ([]Container, error) {
 	filters, _ := json.Marshal(map[string][]string{"label": {label + "=" + value}})
 	q := url.Values{"all": {"1"}, "filters": {string(filters)}}
-	var out []struct {
-		ID string `json:"Id"`
-	}
+	var out []Container
 	if err := c.doJSON(ctx, http.MethodGet, "/containers/json", q, nil, &out); err != nil {
 		return nil, err
 	}
-	ids := make([]string, len(out))
-	for i, o := range out {
-		ids[i] = o.ID
-	}
-	return ids, nil
+	return out, nil
 }
 
 // LogLine is one demultiplexed line from a container's stdout/stderr.

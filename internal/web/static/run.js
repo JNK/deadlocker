@@ -21,6 +21,7 @@
     wire: [],
     docker: [],
     activity: [],
+    console: [],
     selected: null,
     lastSeq: 0
   };
@@ -204,14 +205,7 @@
         '</div>';
     }
 
-    if (step.error) {
-      var kindClass = step.error.kind === 'timeout' ? 'callout-warn' : 'callout-danger';
-      html += '<div class="callout ' + kindClass + '"><h4>' + esc(errorLabel(step.error)) + '</h4>' +
-        '<code>' + esc(step.error.message) + '</code>';
-      if (step.error.sql_state) html += '<div class="muted">SQLSTATE ' + esc(step.error.sql_state) + '</div>';
-      if (step.error.hint) html += '<p>' + esc(step.error.hint) + '</p>';
-      html += '</div>';
-    }
+    if (step.error) html += errorCalloutHTML(step.error);
 
     html += '<div class="detail-grid">';
     html += stat('Status', statusOf(step));
@@ -221,43 +215,61 @@
     if (step.last_insert_id) html += stat('Last insert id', step.last_insert_id);
     html += '</div>';
 
-    if (step.plan && step.plan.length) {
-      html += '<div class="panel-subhead">Query plan</div>';
-      html += '<div class="table-wrap"><table class="plan-table"><thead><tr>' +
-        '<th>table</th><th>access</th><th>key</th><th>rows</th><th>extra</th>' +
-        '</tr></thead><tbody>';
-      step.plan.forEach(function (r) {
-        html += '<tr>' +
-          '<td>' + esc(r.table || '—') + '</td>' +
-          '<td><span class="plan-type ' + planClass(r.type) + '">' + esc(r.type || '?') + '</span></td>' +
-          '<td>' + esc(r.key && r.key !== 'NULL' ? r.key : '—') + '</td>' +
-          '<td>' + esc(String(r.rows)) + '</td>' +
-          '<td>' + esc(r.extra || '') + '</td>' +
-          '</tr>';
-      });
-      html += '</tbody></table></div>';
-      step.plan.forEach(function (r) {
-        if (r.explain) html += '<div class="plan-explain">' + esc(r.explain) + '</div>';
-      });
-    }
-
-    if (step.columns && step.columns.length && step.rows) {
-      html += '<div class="table-wrap"><table class="data"><thead><tr>';
-      step.columns.forEach(function (c) { html += '<th>' + esc(c) + '</th>'; });
-      html += '</tr></thead><tbody>';
-      step.rows.forEach(function (row) {
-        html += '<tr>';
-        row.forEach(function (v) { html += '<td class="mono">' + esc(v) + '</td>'; });
-        html += '</tr>';
-      });
-      html += '</tbody></table></div>';
-      if (step.rows_truncated) {
-        html += '<p class="muted">Showing the first ' + step.rows.length + ' of ' + step.row_count + ' rows.</p>';
-      }
-      if (!step.rows.length) html += '<p class="muted">The statement returned no rows.</p>';
-    }
+    html += planHTML(step.plan);
+    html += resultTableHTML(step);
 
     host.innerHTML = html;
+  }
+
+  // A result is a result wherever it came from, so the step pane and the SQL
+  // console render one the same way.
+  function errorCalloutHTML(err) {
+    var kindClass = err.kind === 'timeout' ? 'callout-warn' : 'callout-danger';
+    var html = '<div class="callout ' + kindClass + '"><h4>' + esc(errorLabel(err)) + '</h4>' +
+      '<code>' + esc(err.message) + '</code>';
+    if (err.sql_state) html += '<div class="muted">SQLSTATE ' + esc(err.sql_state) + '</div>';
+    if (err.hint) html += '<p>' + esc(err.hint) + '</p>';
+    return html + '</div>';
+  }
+
+  function planHTML(plan) {
+    if (!plan || !plan.length) return '';
+    var html = '<div class="panel-subhead">Query plan</div>';
+    html += '<div class="table-wrap"><table class="plan-table"><thead><tr>' +
+      '<th>table</th><th>access</th><th>key</th><th>rows</th><th>extra</th>' +
+      '</tr></thead><tbody>';
+    plan.forEach(function (r) {
+      html += '<tr>' +
+        '<td>' + esc(r.table || '—') + '</td>' +
+        '<td><span class="plan-type ' + planClass(r.type) + '">' + esc(r.type || '?') + '</span></td>' +
+        '<td>' + esc(r.key && r.key !== 'NULL' ? r.key : '—') + '</td>' +
+        '<td>' + esc(String(r.rows)) + '</td>' +
+        '<td>' + esc(r.extra || '') + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    plan.forEach(function (r) {
+      if (r.explain) html += '<div class="plan-explain">' + esc(r.explain) + '</div>';
+    });
+    return html;
+  }
+
+  function resultTableHTML(res) {
+    if (!res.columns || !res.columns.length || !res.rows) return '';
+    var html = '<div class="table-wrap"><table class="data"><thead><tr>';
+    res.columns.forEach(function (c) { html += '<th>' + esc(c) + '</th>'; });
+    html += '</tr></thead><tbody>';
+    res.rows.forEach(function (row) {
+      html += '<tr>';
+      row.forEach(function (v) { html += '<td class="mono">' + esc(v) + '</td>'; });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    if (res.rows_truncated) {
+      html += '<p class="muted">Showing the first ' + res.rows.length + ' of ' + res.row_count + ' rows.</p>';
+    }
+    if (!res.rows.length) html += '<p class="muted">The statement returned no rows.</p>';
+    return html;
   }
 
   // planClass colours the access path: a full scan is the finding, a unique
@@ -298,7 +310,7 @@
       return;
     }
 
-    var actors = (state.run.actors || []);
+    var actors = allSessions();
     var involved = [];
     var seen = {};
     // Keep declaration order so the graph does not reshuffle between snapshots.
@@ -570,9 +582,16 @@
     host.innerHTML = html + '</tbody></table></div>';
   }
 
+  // Sessions are the scenario's actors plus any standalone connections opened
+  // from the console. A console session takes locks like anything else, so it
+  // has to be nameable everywhere a lock is shown.
+  function allSessions() {
+    return (state.run.actors || []).concat(state.run.sessions || []);
+  }
+
   function actorName(id) {
     if (!id) return 'another session';
-    var a = (state.run.actors || []).filter(function (x) { return x.id === id; })[0];
+    var a = allSessions().filter(function (x) { return x.id === id; })[0];
     return a ? a.name : id;
   }
 
@@ -585,7 +604,10 @@
     var actor = document.getElementById('wire-actor').value;
     var step = document.getElementById('wire-step').value;
     if (actor && ev.actor !== actor) return false;
-    if (step !== '' && String(ev.step_index) !== step) return false;
+    // Console traffic is filed under "console" rather than under whichever step
+    // the session happened to be on: it belongs to neither.
+    if (step === 'console') return !!ev.console_id;
+    if (step !== '' && (ev.console_id || String(ev.step_index) !== step)) return false;
     return true;
   }
 
@@ -709,6 +731,64 @@
     connState.textContent = 'finished';
   }
 
+  // renderPrepare shows what the run is waiting for while its container comes
+  // up. Pulling an image is minutes of work on a cold machine, and the only
+  // thing worse than waiting for it is waiting for it with no idea why.
+  var PREPARE_PHASES = {
+    check: 'Checking for the image',
+    pull: 'Pulling the image',
+    waiting: 'Waiting for another run to finish starting this image',
+    create: 'Starting the container',
+    boot: 'Waiting for MySQL',
+    ready: 'Preparing the database'
+  };
+
+  var PREPARE_NOTES = {
+    pull: 'The image is downloaded once and then reused, so this only happens the first time you run against this version.',
+    boot: 'MySQL initialises its data directory on first boot. An image running under emulation takes noticeably longer.',
+    waiting: 'Containers are shared per image, so this run joins the one already starting.'
+  };
+
+  function renderPrepare(st) {
+    var host = document.getElementById('prepare');
+    if (!host) return;
+    var preparing = st.status === 'preparing';
+
+    // A run that could not be started keeps the banner and says why. The
+    // reason is the whole content of the page at that point, and it has to
+    // survive a reload — which a toast does not.
+    if (!preparing && st.error) {
+      host.hidden = false;
+      host.classList.add('is-error');
+      host.classList.remove('is-indeterminate');
+      document.getElementById('prepare-phase').textContent = 'This run could not be started';
+      document.getElementById('prepare-detail').textContent = st.error;
+      document.getElementById('prepare-percent').textContent = '';
+      document.getElementById('prepare-note').textContent =
+        'Nothing was left behind: the scratch database and any container this run created are already gone.';
+      return;
+    }
+
+    host.classList.remove('is-error');
+    host.hidden = !preparing;
+    if (!preparing) return;
+
+    var p = st.prepare || {};
+    document.getElementById('prepare-phase').textContent =
+      PREPARE_PHASES[p.phase] || 'Starting the run';
+    document.getElementById('prepare-detail').textContent = p.detail || '';
+    document.getElementById('prepare-note').textContent = PREPARE_NOTES[p.phase] || '';
+
+    var pct = typeof p.percent === 'number' ? p.percent : -1;
+    var fill = document.getElementById('prepare-fill');
+    var label = document.getElementById('prepare-percent');
+    // A phase with no denominator gets a moving bar rather than a fake number:
+    // "waiting for mysqld" has no honest percentage.
+    host.classList.toggle('is-indeterminate', pct < 0);
+    fill.style.width = pct >= 0 ? pct + '%' : '';
+    label.textContent = pct >= 0 ? pct + '%' : '';
+  }
+
   function renderRunState() {
     var st = state.run;
     var badge = document.querySelector('[data-run-status]');
@@ -719,19 +799,41 @@
     var cursor = document.querySelector('[data-cursor]');
     if (cursor) cursor.textContent = st.cursor;
 
+    renderPrepare(st);
+
+    var addr = document.querySelector('[data-run-addr]');
+    if (addr && st.addr) { addr.textContent = st.addr; addr.hidden = false; }
+
     (st.actors || []).forEach(function (a) {
       var trx = document.querySelector('[data-actor-trx="' + a.id + '"]');
       if (trx) trx.hidden = !a.in_trx;
+      // The connection id only exists once the actor has connected, which is
+      // after the container is up.
+      var conn = document.querySelector('[data-actor-conn="' + a.id + '"]');
+      if (conn && a.conn_id) {
+        conn.textContent = '#' + a.conn_id;
+        conn.hidden = false;
+      }
     });
+
+    renderSessions();
 
     var stepBtn = document.getElementById('btn-step');
     var playBtn = document.getElementById('btn-play');
     var done = st.cursor >= st.total;
     if (stepBtn && playBtn) {
-      stepBtn.disabled = done || st.status === 'closed' || st.status === 'failed';
+      stepBtn.disabled = done || st.status === 'preparing' ||
+        st.status === 'closed' || st.status === 'failed';
       playBtn.disabled = stepBtn.disabled;
       document.querySelector('[data-lanes-end]').textContent =
-        done ? 'End of scenario — every step has been submitted.' : 'Press Step to submit step ' + (st.cursor + 1) + '.';
+        st.status === 'preparing' ? 'Waiting for MySQL before the first step can run.'
+          : done ? 'End of scenario — every step has been submitted.'
+            : 'Press Step to submit step ' + (st.cursor + 1) + '.';
+    }
+
+    if (st.error) {
+      var lanesEnd = document.querySelector('[data-lanes-end]');
+      if (lanesEnd) lanesEnd.textContent = 'This run could not be started — see the message above.';
     }
 
     if (st.deadlock_report) {
@@ -745,6 +847,288 @@
   function setCount(name, n) {
     var el = document.querySelector('[data-count="' + name + '"]');
     if (el) el.textContent = n ? '(' + n + ')' : '';
+  }
+
+  // --------------------------------------------------------- the SQL console
+  //
+  // A scenario is a fixed sequence, and a fixed sequence provokes "what if".
+  // The console answers it against the run that is already in front of you,
+  // with the state it has right now, on a connection you choose: an actor's —
+  // which puts the statement inside that actor's open transaction — or a
+  // standalone one, which sees only what a separate session would.
+
+  var consoleLog = document.getElementById('console-log');
+  var consoleTarget = document.getElementById('console-target');
+  var consoleSQL = document.getElementById('console-sql');
+  var consoleHistory = [];
+  var historyAt = -1;
+  var consoleBusy = false;
+  var MAX_CONSOLE_ENTRIES = 200;
+
+  function currentTarget() {
+    return consoleTarget ? consoleTarget.value : '';
+  }
+
+  // sessionSig is what the target list is built from. State events arrive on
+  // every step, and rebuilding a <select> under someone who has it open is its
+  // own small bug, so the list is only redrawn when it has actually changed.
+  var sessionSig = '';
+
+  // renderSessions keeps the target list, the disconnect button and the wire
+  // filter in step with the sessions the run actually has.
+  function renderSessions() {
+    if (!consoleTarget) return;
+    var sessions = allSessions();
+    var sig = sessions.map(function (s) {
+      return s.id + ':' + s.name + ':' + (s.in_trx ? '1' : '0');
+    }).join('|');
+    if (sig === sessionSig) {
+      renderConsoleHint();
+      return;
+    }
+    sessionSig = sig;
+    var chosen = currentTarget();
+    if (!sessions.some(function (s) { return s.id === chosen; })) {
+      chosen = sessions.length ? sessions[0].id : '';
+    }
+    consoleTarget.innerHTML = sessions.map(function (s) {
+      return '<option value="' + esc(s.id) + '"' + (s.id === chosen ? ' selected' : '') + '>' +
+        esc(s.name) + (s.standalone ? ' (standalone)' : '') +
+        (s.in_trx ? ' · in a transaction' : '') + '</option>';
+    }).join('');
+
+    var closeBtn = document.getElementById('console-close');
+    if (closeBtn) {
+      var sel = sessions.filter(function (s) { return s.id === chosen; })[0];
+      closeBtn.hidden = !(sel && sel.standalone);
+    }
+    renderConsoleHint();
+    paintPrompt();
+
+    // The wire panel filters by session, so a new console session belongs in
+    // its list too.
+    var wireActor = document.getElementById('wire-actor');
+    if (wireActor) {
+      var keep = wireActor.value;
+      wireActor.innerHTML = '<option value="">all actors</option>' + sessions.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>';
+      }).join('');
+      wireActor.value = keep;
+    }
+  }
+
+  function renderConsoleHint() {
+    var hint = document.getElementById('console-hint');
+    if (!hint) return;
+    var sel = allSessions().filter(function (s) { return s.id === currentTarget(); })[0];
+    if (!sel) { hint.textContent = ''; return; }
+    hint.textContent = sel.standalone
+      ? 'a session of its own — outside the scenario'
+      : (sel.in_trx ? 'inside this actor’s open transaction' : 'on this actor’s own connection');
+  }
+
+  function paintPrompt() {
+    var prompt = document.getElementById('console-prompt');
+    if (!prompt) return;
+    var sel = allSessions().filter(function (s) { return s.id === currentTarget(); })[0];
+    prompt.textContent = sel ? sel.name + ' ›' : '›';
+    prompt.className = 'console-prompt' + (sel ? ' accent-' + esc(sel.accent || 'blue') : '');
+  }
+
+  function consoleEntryHTML(entry) {
+    var html = '<div class="console-entry-row accent-' + esc(entry.accent || 'blue') +
+      ' status-' + esc(entry.status) + '" data-console-entry="' + entry.id + '">';
+    html += '<div class="console-entry-head">' +
+      '<span class="console-who"><span class="actor-dot"></span>' + esc(entry.name) + '</span>' +
+      '<span class="step-status">' + esc(entry.status) + '</span>';
+    if (entry.status === 'done' || entry.status === 'error') {
+      html += '<span class="mini mini-mono">' + entry.duration_ms + ' ms</span>';
+    }
+    if (entry.status === 'done') {
+      if (entry.row_count) {
+        html += '<span class="mini mini-ok">' + entry.row_count + ' row' + (entry.row_count === 1 ? '' : 's') + '</span>';
+      } else if (entry.rows_affected) {
+        html += '<span class="mini mini-ok">' + entry.rows_affected + ' affected</span>';
+      } else {
+        html += '<span class="mini mini-ok">ok</span>';
+      }
+    }
+    if (entry.status === 'blocked') {
+      var by = (entry.blocked_by || []).map(actorName).join(', ');
+      html += '<span class="mini mini-warn">waiting' + (by ? ' on ' + esc(by) : '') + '</span>';
+    } else if (entry.was_blocked) {
+      html += '<span class="mini mini-warn" title="This statement waited on a lock before it finished">was blocked</span>';
+    }
+    html += '</div>';
+    html += '<pre class="sql">' + esc(entry.sql) + '</pre>';
+
+    if (entry.status === 'blocked') {
+      html += '<div class="callout callout-warn"><h4>Blocked</h4>' +
+        (entry.wait_explain
+          ? esc(entry.wait_explain)
+          : 'The statement has not returned yet. It is waiting on a lock held by another transaction.') +
+        '</div>';
+    }
+    if (entry.error) html += errorCalloutHTML(entry.error);
+    html += planHTML(entry.plan);
+    html += resultTableHTML(entry);
+    if (entry.last_insert_id) {
+      html += '<p class="muted">Last insert id ' + esc(String(entry.last_insert_id)) + '.</p>';
+    }
+    return html + '</div>';
+  }
+
+  function renderConsole() {
+    if (!consoleLog) return;
+    if (!state.console.length) {
+      consoleLog.innerHTML = '<div class="dock-empty">' +
+        'Type SQL and press Enter. It runs on the session you pick above — an actor’s connection, ' +
+        'inside whatever transaction it has open, or a standalone one. ' +
+        'Whatever it locks shows up in the Locks tab like any step does.</div>';
+      return;
+    }
+    consoleLog.innerHTML = state.console.map(consoleEntryHTML).join('');
+    consoleLog.scrollTop = consoleLog.scrollHeight;
+  }
+
+  // upsertConsole replaces an entry in place: the same statement is published
+  // when it is submitted, when it blocks, and again when it finally returns.
+  function upsertConsole(entry) {
+    var at = -1;
+    for (var i = 0; i < state.console.length; i++) {
+      if (state.console[i].id === entry.id) { at = i; break; }
+    }
+    if (at >= 0) {
+      state.console[at] = entry;
+    } else {
+      state.console.push(entry);
+      // A result set can be two hundred rows; a long session of typing should
+      // not grow the page without bound.
+      if (state.console.length > MAX_CONSOLE_ENTRIES) {
+        state.console.splice(0, state.console.length - MAX_CONSOLE_ENTRIES);
+        if (consoleLog && consoleLog.childElementCount > MAX_CONSOLE_ENTRIES) {
+          consoleLog.removeChild(consoleLog.firstElementChild);
+        }
+      }
+    }
+    setCount('console', state.console.length);
+
+    var row = consoleLog && consoleLog.querySelector('[data-console-entry="' + entry.id + '"]');
+    if (row) {
+      row.outerHTML = consoleEntryHTML(entry);
+      return;
+    }
+    if (!consoleLog) return;
+    var atBottom = consoleLog.scrollHeight - consoleLog.scrollTop - consoleLog.clientHeight < 80;
+    if (consoleLog.firstElementChild && consoleLog.firstElementChild.classList.contains('dock-empty')) {
+      consoleLog.innerHTML = '';
+    }
+    consoleLog.insertAdjacentHTML('beforeend', consoleEntryHTML(entry));
+    if (atBottom) consoleLog.scrollTop = consoleLog.scrollHeight;
+  }
+
+  function submitConsole() {
+    if (consoleBusy || !consoleSQL) return;
+    var sql = consoleSQL.value.trim();
+    if (!sql) return;
+    var target = currentTarget();
+    if (!target) { toast('There is no session to run this on yet.', 'warn'); return; }
+
+    consoleBusy = true;
+    document.getElementById('console-run').disabled = true;
+    postJSON('/run/' + runID + '/console', { session: target, sql: sql })
+      .then(function (res) {
+        if (!res.ok) {
+          toast(res.error, res.blocked_actor ? 'warn' : 'error');
+          return;
+        }
+        // The statement is kept in the box on failure so it can be corrected;
+        // on success the box is cleared and the statement joins the history.
+        consoleHistory.push(sql);
+        historyAt = consoleHistory.length;
+        consoleSQL.value = '';
+        if (res.entry) upsertConsole(res.entry);
+      })
+      .catch(function (err) { toast(String(err), 'error'); })
+      .finally(function () {
+        consoleBusy = false;
+        document.getElementById('console-run').disabled = false;
+        consoleSQL.focus();
+      });
+  }
+
+  if (consoleSQL) {
+    document.getElementById('console-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      submitConsole();
+    });
+
+    consoleSQL.addEventListener('keydown', function (e) {
+      // Enter runs, Shift-Enter is a newline: the statement is usually one line
+      // and occasionally several.
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submitConsole();
+        return;
+      }
+      // Arrow keys walk the history, but only from the edges of the text, so
+      // they still move the caret inside a multi-line statement.
+      if (e.key === 'ArrowUp' && consoleSQL.selectionStart === 0 && consoleHistory.length) {
+        e.preventDefault();
+        historyAt = Math.max(0, historyAt - 1);
+        consoleSQL.value = consoleHistory[historyAt] || '';
+        return;
+      }
+      if (e.key === 'ArrowDown' && consoleSQL.selectionStart === consoleSQL.value.length && consoleHistory.length) {
+        e.preventDefault();
+        historyAt = Math.min(consoleHistory.length, historyAt + 1);
+        consoleSQL.value = historyAt >= consoleHistory.length ? '' : consoleHistory[historyAt];
+      }
+    });
+
+    consoleTarget.addEventListener('change', function () {
+      renderConsoleHint();
+      paintPrompt();
+      var sel = allSessions().filter(function (s) { return s.id === currentTarget(); })[0];
+      document.getElementById('console-close').hidden = !(sel && sel.standalone);
+    });
+
+    document.getElementById('console-new').addEventListener('click', function () {
+      var btn = document.getElementById('console-new');
+      btn.disabled = true;
+      postJSON('/run/' + runID + '/console/session')
+        .then(function (res) {
+          if (!res.ok) { toast(res.error, 'error'); return; }
+          if (res.session) {
+            state.run.sessions = (state.run.sessions || []).concat([res.session]);
+            renderSessions();
+            consoleTarget.value = res.session.id;
+            renderConsoleHint();
+            paintPrompt();
+            document.getElementById('console-close').hidden = false;
+            toast(res.session.name + ' connected — a session of its own, outside the scenario.', 'ok');
+          }
+          consoleSQL.focus();
+        })
+        .catch(function (err) { toast(String(err), 'error'); })
+        .finally(function () { btn.disabled = false; });
+    });
+
+    document.getElementById('console-close').addEventListener('click', function () {
+      var id = currentTarget();
+      postJSON('/run/' + runID + '/console/session/' + encodeURIComponent(id) + '/close')
+        .then(function (res) {
+          if (!res.ok) { toast(res.error, 'error'); return; }
+          state.run.sessions = (state.run.sessions || []).filter(function (s) { return s.id !== id; });
+          renderSessions();
+        });
+    });
+
+    document.getElementById('console-clear').addEventListener('click', function () {
+      state.console = [];
+      setCount('console', 0);
+      renderConsole();
+    });
   }
 
   // ------------------------------------------------------------ event feed
@@ -774,13 +1158,22 @@
       source.close();
     });
 
-    ['state', 'step', 'wire', 'locks', 'docker', 'log'].forEach(function (type) {
+    ['state', 'step', 'wire', 'locks', 'docker', 'log', 'console'].forEach(function (type) {
       source.addEventListener(type, function (e) {
         var ev;
         try { ev = JSON.parse(e.data); } catch (err) { return; }
         if (ev.seq) state.lastSeq = Math.max(state.lastSeq, ev.seq);
         handle(ev);
       });
+    });
+
+    // The global activity feed rides this stream so the page holds one
+    // connection instead of two. Its sequence is its own and must not be
+    // mistaken for the run's, so it is handled apart from the events above.
+    source.addEventListener('activity', function (e) {
+      var activity;
+      try { activity = JSON.parse(e.data); } catch (err) { return; }
+      window.dispatchEvent(new CustomEvent('dl-activity-frame', { detail: activity }));
     });
   }
 
@@ -807,6 +1200,9 @@
         break;
       case 'docker':
         appendDocker(ev.docker);
+        break;
+      case 'console':
+        upsertConsole(ev.console);
         break;
       case 'log':
         appendActivity(ev);
@@ -1031,6 +1427,12 @@
     });
     if (name === 'wire') renderWireAll();
     if (name === 'docker') renderDockerAll();
+    if (name === 'console' && consoleSQL) {
+      // A hidden element has no scroll height, so the transcript can only be
+      // put at its newest end once the panel is actually on screen.
+      consoleLog.scrollTop = consoleLog.scrollHeight;
+      consoleSQL.focus();
+    }
   }
   document.querySelectorAll('.dock-tab').forEach(function (t) {
     t.addEventListener('click', function () { activateTab(t.dataset.tab); });
@@ -1203,6 +1605,7 @@
 
   renderAllSteps();
   renderRunState();
+  renderConsole();
 
   if (window.DL_ARCHIVED) {
     // A finished run has no stream to join. Everything on screen came from its

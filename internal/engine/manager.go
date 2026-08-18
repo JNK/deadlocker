@@ -47,7 +47,44 @@ func (m *Manager) History() *History { return m.history }
 // SettleWindow is how long a statement may run before it is called blocked.
 func (m *Manager) SettleWindow() time.Duration { return m.settle }
 
-// Start prepares a new run for the case.
+// prepareTimeout bounds a background start. It has to cover a cold pull of a
+// large image on a slow link plus an emulated first boot, both of which are
+// minutes rather than seconds.
+const prepareTimeout = 6 * time.Minute
+
+// StartAsync registers a run and brings its container up in the background.
+//
+// The run is addressable immediately, which is the point: pulling an image and
+// booting MySQL can take minutes, and a run that only exists once that is
+// finished has nowhere to report its progress. Callers that need a usable run
+// wait on WaitReady.
+func (m *Manager) StartAsync(c *casedef.Case) (*Run, error) {
+	m.evictIfNeeded()
+
+	id, err := newRunID()
+	if err != nil {
+		return nil, err
+	}
+	run := New(id, c, m.settle)
+	run.onState = func(r *Run) { m.history.Put(snapshotRecord(r)) }
+	m.history.Put(snapshotRecord(run))
+
+	m.mu.Lock()
+	m.runs[id] = run
+	m.order = append(m.order, id)
+	m.mu.Unlock()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), prepareTimeout)
+		defer cancel()
+		// The error is already on the run's state and its bus, which is where
+		// everything watching this run is looking.
+		_ = run.Setup(ctx, m.pool)
+	}()
+	return run, nil
+}
+
+// Start prepares a new run for the case, returning only once it is ready.
 func (m *Manager) Start(ctx context.Context, c *casedef.Case) (*Run, error) {
 	m.evictIfNeeded()
 
@@ -143,14 +180,19 @@ func (m *Manager) CloseRun(id string) error {
 	return r.Close()
 }
 
-// OnDockerLog fans a container log line out to every run using that image.
+// OnDockerLog fans a container log line out to every run on that container.
 // mysqld writes deadlock reports to the error log, so this is where the InnoDB
 // deadlock narrative reaches the UI.
-func (m *Manager) OnDockerLog(image string, line dockerctl.LogLine) {
+//
+// Runs are matched on the pool key rather than on the image, because two
+// containers can share an image: a scenario that needs innodb_deadlock_detect
+// off runs on a server of its own, and showing its log to runs on the ordinary
+// server would attribute one run's deadlock report to another.
+func (m *Manager) OnDockerLog(key string, line dockerctl.LogLine) {
 	m.mu.RLock()
 	runs := make([]*Run, 0, len(m.runs))
 	for _, r := range m.runs {
-		if r.Case.MySQL.Image == image {
+		if r.Spec().Key() == key {
 			runs = append(runs, r)
 		}
 	}

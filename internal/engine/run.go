@@ -195,6 +195,22 @@ type ActorState struct {
 	Busy      bool   `json:"busy"`
 	InTrx     bool   `json:"in_trx"`
 	StepIndex int    `json:"step_index"`
+	// Standalone marks a session opened from the console rather than declared
+	// by the scenario. It runs no steps; it exists to be typed into.
+	Standalone bool `json:"standalone,omitempty"`
+}
+
+// PrepareState is how far a run is from being usable, published while the
+// container is being pulled and booted.
+//
+// Without this the first run of an image is a button that does nothing for two
+// minutes: the work is real, but all of it happens before there is a page to
+// show it on.
+type PrepareState struct {
+	Phase  string `json:"phase"`
+	Detail string `json:"detail,omitempty"`
+	// Percent is 0..100 where the work has a denominator, -1 where it does not.
+	Percent int `json:"percent"`
 }
 
 // RunState is the run summary the UI renders in the header.
@@ -209,9 +225,15 @@ type RunState struct {
 	Cursor   int          `json:"cursor"`
 	Total    int          `json:"total"`
 	Actors   []ActorState `json:"actors"`
+	// Sessions are the standalone connections opened from the console. They are
+	// kept apart from Actors so the scenario's lanes stay the scenario's.
+	Sessions []ActorState `json:"sessions,omitempty"`
 	Message  string       `json:"message,omitempty"`
 	Error    string       `json:"error,omitempty"`
 	Started  time.Time    `json:"started"`
+
+	// Prepare is set while the run is still coming up.
+	Prepare *PrepareState `json:"prepare,omitempty"`
 
 	DeadlockReport  string `json:"deadlock_report,omitempty"`
 	Isolation       string `json:"isolation,omitempty"`
@@ -229,6 +251,9 @@ type actorConn struct {
 	id     string
 	name   string
 	accent string
+	// standalone marks a console session: same machinery, but it belongs to no
+	// step in the scenario.
+	standalone bool
 
 	proxy *wire.Proxy
 	db    *sql.DB
@@ -239,6 +264,18 @@ type actorConn struct {
 	busy      bool
 	inTrx     bool
 	stepIndex int
+	// consoleID tags the packets of a console statement that is in flight, so
+	// the wire panel can tell typed SQL from the scenario's own.
+	consoleID int
+}
+
+func (a *actorConn) state() ActorState {
+	return ActorState{
+		ID: a.id, Name: a.name, Accent: a.accent,
+		ConnID: a.connID, Busy: a.busy, InTrx: a.inTrx,
+		StepIndex: a.stepIndex, Standalone: a.standalone,
+		ProxyAddr: proxyAddr(a),
+	}
 }
 
 // Run is one execution of a scenario.
@@ -267,6 +304,20 @@ type Run struct {
 	deadlock   string
 	startedAt  time.Time
 	closed     bool
+
+	// prepare is the live progress of pulling and booting the container.
+	prepare *PrepareState
+	// ready is closed once setup has finished, successfully or not, so anything
+	// that needs a usable run can wait for one instead of being refused.
+	ready    chan struct{}
+	setupErr error
+
+	// consoles are the standalone connections opened from the SQL console, and
+	// consoleSeq numbers both those sessions and the statements typed into them.
+	consoles     map[string]*actorConn
+	consoleOrder []string
+	consoleSeq   int
+	entrySeq     int
 	// lastLocks is the most recent snapshot, kept so a history record can carry
 	// the lock landscape the run ended with.
 	lastLocks *LockSnapshot
@@ -279,10 +330,16 @@ type Run struct {
 	// agent's next step_run returns immediately and reports why, so the model
 	// learns it was stopped on purpose rather than seeing an unexplained halt.
 	interrupt string
+}
 
-	// restoreDeadlockDetect records whether we changed the global so teardown
-	// can put it back for other runs sharing the container.
-	restoreDeadlockDetect bool
+// Spec is the server this run needs. Anything a scenario asks for that MySQL
+// only exposes globally decides which container it lands on, so that concurrent
+// runs cannot reconfigure each other's server.
+func (r *Run) Spec() mysqlbox.Spec {
+	return mysqlbox.Spec{
+		Image:          r.Case.MySQL.Image,
+		DeadlockDetect: r.Case.MySQL.DeadlockDetect,
+	}
 }
 
 var (
@@ -300,13 +357,19 @@ type ActorBlockedError struct {
 }
 
 func (e *ActorBlockedError) Error() string {
+	if e.StepIndex == 0 {
+		// A console session runs no steps, so there is no step number to blame.
+		return fmt.Sprintf("%s is still running a statement — a connection can only run one at a time. Use another session, or wait for the lock to resolve.",
+			e.ActorName)
+	}
 	return fmt.Sprintf("%s is still waiting on step %d — a connection can only run one statement at a time. Advance another actor, or wait for the lock to resolve.",
 		e.ActorName, e.StepIndex)
 }
 
-// Prepare builds a run: creates a scratch database, applies schema and seed
-// data, then opens one proxied connection per actor.
-func Prepare(ctx context.Context, id string, c *casedef.Case, pool *mysqlbox.Pool, settle time.Duration) (*Run, error) {
+// New builds a run without touching Docker: the scenario's steps and actors are
+// laid out immediately, so the run has a page worth showing while its container
+// is still being pulled. Setup does the slow half.
+func New(id string, c *casedef.Case, settle time.Duration) *Run {
 	execCtx, cancel := context.WithCancel(context.Background())
 	r := &Run{
 		ID:           id,
@@ -317,8 +380,11 @@ func Prepare(ctx context.Context, id string, c *casedef.Case, pool *mysqlbox.Poo
 		execCancel:   cancel,
 		status:       StatusPreparing,
 		actors:       map[string]*actorConn{},
+		consoles:     map[string]*actorConn{},
+		ready:        make(chan struct{}),
 		startedAt:    time.Now(),
 		database:     "dl_" + id,
+		prepare:      &PrepareState{Phase: mysqlbox.PhaseCheck, Detail: "starting", Percent: -1},
 	}
 	for i, st := range c.Steps {
 		actor, _ := c.Actor(st.Actor)
@@ -334,35 +400,114 @@ func Prepare(ctx context.Context, id string, c *casedef.Case, pool *mysqlbox.Poo
 			Expect:    st.Expect,
 		})
 	}
+	// The actors exist before their connections do. Naming them now is what lets
+	// the run page draw its lanes while the container is still coming up.
+	for _, a := range c.Actors {
+		r.actors[a.ID] = &actorConn{id: a.ID, name: a.Name, accent: a.Accent}
+		r.actorOrder = append(r.actorOrder, a.ID)
+	}
+	return r
+}
 
-	if err := r.setup(ctx, pool); err != nil {
-		r.mu.Lock()
+// Prepare builds a run and brings it all the way up, returning only once it is
+// ready to be stepped.
+func Prepare(ctx context.Context, id string, c *casedef.Case, pool *mysqlbox.Pool, settle time.Duration) (*Run, error) {
+	r := New(id, c, settle)
+	return r, r.Setup(ctx, pool)
+}
+
+// Setup creates the scratch database, applies schema and seed data, and opens
+// one proxied connection per actor. It reports progress on the run's bus as it
+// goes, and closes the run's ready channel when it is done either way.
+func (r *Run) Setup(ctx context.Context, pool *mysqlbox.Pool) error {
+	err := r.setup(ctx, pool)
+
+	r.mu.Lock()
+	r.setupErr = err
+	if err != nil {
 		r.status = StatusFailed
 		r.runErr = err.Error()
-		r.mu.Unlock()
+	} else {
+		r.status = StatusReady
+		r.message = "ready — step through the scenario"
+		r.prepare = nil
+	}
+	select {
+	case <-r.ready:
+	default:
+		close(r.ready)
+	}
+	r.mu.Unlock()
+
+	if err != nil {
 		r.logf("error", "setup failed: %v", err)
 		r.publishState()
 		// Release whatever did get created.
 		r.Close()
-		return r, err
+		return err
 	}
-
-	r.mu.Lock()
-	r.status = StatusReady
-	r.message = "ready — step through the scenario"
-	r.mu.Unlock()
 	r.publishState()
-	return r, nil
+	return nil
+}
+
+// WaitReady blocks until setup has finished, and reports what it concluded. A
+// run that is still pulling an image is not broken, so anything that wants to
+// step it waits rather than being told no.
+func (r *Run) WaitReady(ctx context.Context) error {
+	r.mu.Lock()
+	ready := r.ready
+	r.mu.Unlock()
+	if ready == nil {
+		return nil
+	}
+	select {
+	case <-ready:
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.setupErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// setProgress records a preparation phase and publishes it, throttled: a pull
+// emits progress dozens of times a second and every publish is an SSE frame to
+// every watcher.
+func (r *Run) setProgress(p mysqlbox.Progress) {
+	r.mu.Lock()
+	prev := r.prepare
+	next := &PrepareState{Phase: p.Phase, Detail: p.Detail, Percent: p.Percent}
+	worthPublishing := prev == nil || prev.Phase != next.Phase ||
+		next.Percent < 0 || next.Percent-prev.Percent >= 1 || next.Percent == 100
+	r.prepare = next
+	r.mu.Unlock()
+
+	if !worthPublishing {
+		return
+	}
+	// The activity log gets phase changes and whole percentage points, not the
+	// byte-by-byte stream.
+	if prev == nil || prev.Phase != next.Phase || next.Percent < 0 {
+		r.logf("info", "%s", p.Detail)
+	}
+	r.publishState()
 }
 
 func (r *Run) setup(ctx context.Context, pool *mysqlbox.Pool) error {
+	spec := r.Spec()
 	r.logf("info", "acquiring MySQL container (%s)", r.Case.MySQL.Image)
-	box, err := pool.Get(ctx, r.Case.MySQL.Image, func(s string) { r.logf("info", "%s", s) })
+	if spec.DeadlockDetect != nil && !*spec.DeadlockDetect {
+		r.logf("info", "this scenario needs innodb_deadlock_detect=OFF, which is a global: it gets a container of its own so no other run is affected")
+	}
+	box, err := pool.Acquire(ctx, spec, r.setProgress)
 	if err != nil {
 		return err
 	}
 	r.box = box
 
+	r.setProgress(mysqlbox.Progress{
+		Phase: mysqlbox.PhaseReady, Detail: "creating the scratch database", Percent: -1,
+	})
 	admin := box.Admin()
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+r.database+"`"); err != nil {
 		return fmt.Errorf("create database: %w", err)
@@ -376,6 +521,9 @@ func (r *Run) setup(ctx context.Context, pool *mysqlbox.Pool) error {
 	setupDB.SetMaxOpenConns(4)
 	r.setupDB = setupDB
 
+	r.setProgress(mysqlbox.Progress{
+		Phase: mysqlbox.PhaseReady, Detail: "applying the schema", Percent: -1,
+	})
 	for i, stmt := range r.Case.Schema {
 		if strings.TrimSpace(stmt) == "" {
 			continue
@@ -399,18 +547,9 @@ func (r *Run) setup(ctx context.Context, pool *mysqlbox.Pool) error {
 		r.logf("info", "applied %d seed statement(s)", n)
 	}
 
-	if dd := r.Case.MySQL.DeadlockDetect; dd != nil {
-		val := "ON"
-		if !*dd {
-			val = "OFF"
-		}
-		if _, err := admin.ExecContext(ctx, "SET GLOBAL innodb_deadlock_detect = "+val); err != nil {
-			return fmt.Errorf("set innodb_deadlock_detect: %w", err)
-		}
-		r.restoreDeadlockDetect = true
-		r.logf("warn", "innodb_deadlock_detect set to %s globally for this run", val)
-	}
-
+	r.setProgress(mysqlbox.Progress{
+		Phase: mysqlbox.PhaseReady, Detail: "connecting the actors", Percent: -1,
+	})
 	for _, a := range r.Case.Actors {
 		if err := r.openActor(ctx, a); err != nil {
 			return fmt.Errorf("actor %s: %w", a.ID, err)
@@ -420,9 +559,30 @@ func (r *Run) setup(ctx context.Context, pool *mysqlbox.Pool) error {
 }
 
 func (r *Run) openActor(ctx context.Context, a casedef.Actor) error {
-	ac := &actorConn{id: a.ID, name: a.Name, accent: a.Accent}
+	r.mu.Lock()
+	ac := r.actors[a.ID]
+	if ac == nil {
+		ac = &actorConn{id: a.ID, name: a.Name, accent: a.Accent}
+		r.actors[a.ID] = ac
+		r.actorOrder = append(r.actorOrder, a.ID)
+	}
+	r.mu.Unlock()
 
-	proxy, err := wire.Listen(r.box.Addr(), a.ID, func(ev wire.Event) {
+	if err := r.dial(ctx, ac); err != nil {
+		return err
+	}
+	r.logf("info", "%s connected as MySQL connection %d via proxy %s", ac.name, ac.connID, ac.proxy.Addr())
+	return nil
+}
+
+// dial gives one session its own proxy and its own dedicated connection.
+//
+// Actors and console sessions go through the same path deliberately: a
+// standalone connection you type into is only a fair comparison with the
+// scenario's own sessions if it was configured the same way — same isolation
+// level, same lock wait timeout, same session variables.
+func (r *Run) dial(ctx context.Context, ac *actorConn) error {
+	proxy, err := wire.Listen(r.box.Addr(), ac.id, func(ev wire.Event) {
 		r.onWire(ev)
 	})
 	if err != nil {
@@ -480,13 +640,6 @@ func (r *Run) openActor(ctx context.Context, a casedef.Actor) error {
 			return fmt.Errorf("set session %s: %w", k, err)
 		}
 	}
-
-	r.mu.Lock()
-	r.actors[a.ID] = ac
-	r.actorOrder = append(r.actorOrder, a.ID)
-	r.mu.Unlock()
-
-	r.logf("info", "%s connected as MySQL connection %d via proxy %s", a.Name, ac.connID, proxy.Addr())
 	return nil
 }
 
@@ -528,19 +681,36 @@ func quoteVarValue(v string) string {
 	return "'" + strings.ReplaceAll(strings.ReplaceAll(t, `\`, `\\`), `'`, `\'`) + "'"
 }
 
-// onWire tags a decoded packet with the step that was in flight for that actor.
+// onWire tags a decoded packet with the step that was in flight for that
+// session, or with the console statement if one is running instead.
 func (r *Run) onWire(ev wire.Event) {
 	r.mu.Lock()
-	idx := 0
-	if a, ok := r.actors[ev.Actor]; ok {
+	idx, console := 0, 0
+	if a := r.sessionLocked(ev.Actor); a != nil {
 		idx = a.stepIndex
+		console = a.consoleID
 	}
 	closed := r.closed
 	r.mu.Unlock()
 	if closed {
 		return
 	}
-	r.Bus.Publish(Event{Type: EventWire, At: ev.At, RunID: r.ID, Wire: &WireEvent{Event: ev, StepIndex: idx}})
+	r.Bus.Publish(Event{
+		Type: EventWire, At: ev.At, RunID: r.ID,
+		Wire: &WireEvent{Event: ev, StepIndex: idx, ConsoleID: console},
+	})
+}
+
+// sessionLocked looks an id up among the actors and then the console sessions.
+// Callers must hold r.mu.
+func (r *Run) sessionLocked(id string) *actorConn {
+	if a, ok := r.actors[id]; ok {
+		return a
+	}
+	if a, ok := r.consoles[id]; ok {
+		return a
+	}
+	return nil
 }
 
 // AppendDockerLog forwards a container log line into this run's timeline.
@@ -633,18 +803,16 @@ func (r *Run) stateLocked() RunState {
 		LockWaitTimeout: r.Case.MySQL.LockWaitTimeout,
 		Interrupted:     r.interrupt,
 		Ephemeral:       r.Case.Ephemeral,
+		Prepare:         r.prepare,
 	}
 	if r.box != nil {
 		s.Addr = r.box.Addr()
 	}
 	for _, id := range r.actorOrder {
-		a := r.actors[id]
-		s.Actors = append(s.Actors, ActorState{
-			ID: a.id, Name: a.name, Accent: a.accent,
-			ConnID: a.connID, Busy: a.busy, InTrx: a.inTrx,
-			StepIndex: a.stepIndex,
-			ProxyAddr: proxyAddr(a),
-		})
+		s.Actors = append(s.Actors, r.actors[id].state())
+	}
+	for _, id := range r.consoleOrder {
+		s.Sessions = append(s.Sessions, r.consoles[id].state())
 	}
 	return s
 }
@@ -1166,8 +1334,14 @@ func (r *Run) snapshot(ctx context.Context) LockSnapshot {
 	r.mu.Lock()
 	db := r.setupDB
 	schema := r.database
-	byConn := make(map[uint64]string, len(r.actors))
+	byConn := make(map[uint64]string, len(r.actors)+len(r.consoles))
 	for _, a := range r.actors {
+		byConn[a.connID] = a.id
+	}
+	// Console sessions are mapped too: a standalone connection that takes a lock
+	// has to appear in the lock table and in the wait-for graph, or the console
+	// would be a way to make a run lie about itself.
+	for _, a := range r.consoles {
 		byConn[a.connID] = a.id
 	}
 	closed := r.closed
@@ -1215,13 +1389,24 @@ func (r *Run) Close() error {
 		return nil
 	}
 	r.closed = true
-	actors := make([]*actorConn, 0, len(r.actors))
+	actors := make([]*actorConn, 0, len(r.actors)+len(r.consoles))
 	for _, id := range r.actorOrder {
 		actors = append(actors, r.actors[id])
 	}
+	for _, id := range r.consoleOrder {
+		actors = append(actors, r.consoles[id])
+	}
 	box, setupDB, database := r.box, r.setupDB, r.database
-	restoreDD := r.restoreDeadlockDetect
 	r.status = StatusClosed
+	// Release anything still waiting for a run that is never going to be ready.
+	select {
+	case <-r.ready:
+	default:
+		if r.setupErr == nil {
+			r.setupErr = errors.New("the run was closed before it was ready")
+		}
+		close(r.ready)
+	}
 	r.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1253,17 +1438,13 @@ func (r *Run) Close() error {
 		_ = setupDB.Close()
 	}
 
+	// Nothing global has to be put back: everything a scenario can vary is
+	// either per session or baked into a container of its own, so tearing a run
+	// down leaves the server exactly as the next run expects to find it.
 	var firstErr error
-	if box != nil {
-		if restoreDD {
-			if _, err := box.Admin().ExecContext(ctx, "SET GLOBAL innodb_deadlock_detect = ON"); err != nil {
-				firstErr = err
-			}
-		}
-		if database != "" {
-			if _, err := box.Admin().ExecContext(ctx, "DROP DATABASE IF EXISTS `"+database+"`"); err != nil && firstErr == nil {
-				firstErr = err
-			}
+	if box != nil && database != "" {
+		if _, err := box.Admin().ExecContext(ctx, "DROP DATABASE IF EXISTS `"+database+"`"); err != nil {
+			firstErr = err
 		}
 	}
 

@@ -62,6 +62,11 @@
     window.dispatchEvent(new CustomEvent('dl-activity', { detail: activity }));
   }
 
+  function receive(activity) {
+    if (activity.seq) lastSeq = Math.max(lastSeq, activity.seq);
+    handle(activity);
+  }
+
   function connect() {
     if (source) source.close();
     source = new EventSource('/api/activity?since=' + lastSeq);
@@ -69,8 +74,7 @@
     source.addEventListener('activity', function (e) {
       var activity;
       try { activity = JSON.parse(e.data); } catch (err) { return; }
-      if (activity.seq) lastSeq = Math.max(lastSeq, activity.seq);
-      handle(activity);
+      receive(activity);
     });
 
     source.addEventListener('ready', function () { primed = true; });
@@ -83,5 +87,17 @@
     setTimeout(function () { primed = true; }, 1500);
   });
 
-  connect();
+  // A page that already holds a run's event stream gets its activity from
+  // there instead of opening a second one. Browsers allow six connections per
+  // origin over HTTP/1.1, and an SSE stream holds one for as long as the page
+  // is open — at two per run page, a few open runs exhausted the budget and
+  // every other request queued behind them, which looked exactly like runs
+  // blocking each other.
+  if (window.DL_ACTIVITY_VIA_RUN) {
+    window.addEventListener('dl-activity-frame', function (e) { receive(e.detail); });
+    // The backlog is history either way, and the run stream does not replay it.
+    primed = true;
+  } else {
+    connect();
+  }
 })();
