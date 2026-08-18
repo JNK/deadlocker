@@ -1,6 +1,6 @@
 name: A secondary index lookup locks two indexes
 category: Indexes
-tags: [secondary-index, clustered-index, next-key-lock]
+tags: [secondary-index, clustered-index, next-key-lock, for-update]
 description: |
   When a locking read finds rows through a secondary index, InnoDB locks the
   secondary index entries AND the clustered index records they point to. It has

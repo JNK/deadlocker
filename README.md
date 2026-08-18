@@ -247,6 +247,14 @@ In the editor, moving the caret into a step lights that step up in the preview
 beside it — the two panes are halves of one document, and without that they are
 only related by the reader holding both in their head.
 
+`tags` are drawn from a shared vocabulary (`internal/casedef/tags.go`), because
+tags are what the library is filtered by and a taxonomy only works if everyone
+spells things the same way. Left uncontrolled it grew synonyms — `mdl` beside
+`metadata-lock`, `range` beside `range-scan` — and a tail of one-off
+descriptions, which is a list nobody can filter by. A tag outside the vocabulary
+is a lint warning, not an error: a scenario you wrote for yourself may
+reasonably have its own words.
+
 `docs` is an optional list of external references, shown beside the description
 on the scenario page. Scenarios explain a behaviour; the manual defines it, and
 keeping the link in the file means the two stay together:
@@ -290,7 +298,9 @@ The built-in scenarios are **not** written to disk on start. Filling a directory
 with two dozen files nobody asked for is a decision, not a default. The library
 page offers the import while it is empty; **Settings → Library** offers it
 always, and never overwrites a file that is already there. `deadlocker -seed`
-does the same for scripts.
+does the same for scripts. The same panel removes them again, deleting only the
+ones still identical to what ships in the binary — a built-in you have edited is
+your work, and is kept.
 
 
 **Fundamentals** — record locks on an existing row · shared vs exclusive

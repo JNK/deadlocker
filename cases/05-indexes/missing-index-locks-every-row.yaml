@@ -1,6 +1,6 @@
 name: An UPDATE with no usable index locks every row it scans
 category: Indexes
-tags: [full-scan, missing-index, next-key-lock, table-lock-in-practice]
+tags: [full-scan, missing-index, next-key-lock, record-lock]
 docs:
   - title: InnoDB Locking — record locks
     url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-record-locks

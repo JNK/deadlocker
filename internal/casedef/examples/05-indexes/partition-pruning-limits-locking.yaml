@@ -1,6 +1,6 @@
 name: Partition pruning decides how much gets locked
 category: Indexes
-tags: [partitioning, pruning, record-lock, full-scan]
+tags: [partitioning, record-lock, full-scan, for-update, lock-scope]
 docs:
   - title: Partition pruning
     url: https://dev.mysql.com/doc/refman/8.4/en/partitioning-pruning.html

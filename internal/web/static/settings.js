@@ -166,6 +166,30 @@
           '. <a href="/">Open the library</a>.');
       });
     });
+
+    var rmBtn = document.getElementById('builtins-remove');
+    if (rmBtn) {
+      rmBtn.addEventListener('click', function () {
+        window.DL.confirm({
+          title: 'Remove the built-in scenarios?',
+          body: 'Only the ones still identical to what ships in the binary are deleted. ' +
+            'Any you have edited are kept, and you can import them again at any time.',
+          confirm: 'Remove them',
+          cancel: 'Cancel',
+          danger: true
+        }).then(function (ok) {
+          if (!ok) return;
+          rmBtn.disabled = true;
+          window.DL.postJSON('/api/builtins/remove', {}).then(function (res) {
+            rmBtn.disabled = false;
+            if (!res.ok) { show('error', esc(res.error)); return; }
+            paintBuiltIns();
+            show('ok', 'Removed ' + res.removed + ' scenario(s)' +
+              (res.kept ? '; kept ' + res.kept + ' you had edited' : '') + '.');
+          });
+        });
+      });
+    }
   }
 
   var copy = document.getElementById('copy-mcp');

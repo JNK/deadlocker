@@ -3324,9 +3324,11 @@ body.is-predicting .step-card.status-pending .step-note { display: none; }
 .predict-choices { display: flex; flex-direction: column; gap: 6px; }
 .predict-choices .btn { justify-content: flex-start; width: 100%; }
 
-/* The format reference is a long document inside a disclosure. Giving it its
-   own scroll box means opening it does not push the editor off the screen. */
-.format-ref { max-height: 60vh; overflow: auto; margin: 0; border-radius: 0; }
+/* The format reference is a long document. It scrolls with the page rather
+   than in a box of its own: a scroll box inside a scrolling page traps the
+   wheel, and the disclosure already keeps it out of the way until wanted. */
+.pg-format .prose { max-width: 74ch; }
+.pg-format .prose h2 { margin-top: 22px; }
 
 /* An aborted analysis keeps whatever it managed to finish. */
 .job-progress-text { flex: 1; }
@@ -3394,3 +3396,17 @@ body.is-predicting .step-card.status-pending .step-note { display: none; }
   cursor: pointer; text-decoration: underline;
 }
 .tag-clear:hover { color: var(--danger); }
+
+.pg-path-static { font-size: 11.5px; }
+
+.tag-rest { display: contents; }
+.tag-more {
+  height: 24px; padding: 0 9px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit; font-size: 11.5px;
+  cursor: pointer;
+}
+.tag-more:hover { color: var(--text); border-color: var(--text-3); }

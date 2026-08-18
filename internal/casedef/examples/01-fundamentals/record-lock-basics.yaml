@@ -1,6 +1,6 @@
 name: A record lock on an existing row
 category: Fundamentals
-tags: [record-lock, select-for-update, rec-not-gap]
+tags: [record-lock, for-update, exclusive-lock]
 description: |
   The simplest possible contention, and the baseline everything else is
   measured against.

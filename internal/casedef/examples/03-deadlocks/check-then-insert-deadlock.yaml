@@ -1,6 +1,6 @@
 name: Check-then-insert deadlocks two requests on the same gap
 category: Deadlocks
-tags: [deadlock, gap-lock, insert-intention, uuidv7, check-then-insert]
+tags: [deadlock, gap-lock, insert-intention, uuidv7, error-1213]
 description: |
   This is the UUIDv7 gap lock scenario with one more turn of the screw, and it
   is where the "harmless" lookup stops merely blocking and starts deadlocking.

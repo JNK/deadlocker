@@ -252,6 +252,16 @@ func lintCase(c *casedef.Case) []string {
 	if len(c.Schema) == 0 {
 		warnings = append(warnings, "no schema statements: the scenario will run against an empty database")
 	}
+
+	// Tags are what the library is filtered by, so a near-miss spelling costs
+	// the scenario its place in that filter. A warning, not an error: a
+	// scenario you wrote for yourself may reasonably have its own vocabulary.
+	if unknown := casedef.UnknownTags(c); len(unknown) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"tag(s) not in the shared vocabulary: %s — filtering groups scenarios by tag, so an "+
+				"unshared spelling hides this one from the group it belongs to",
+			strings.Join(unknown, ", ")))
+	}
 	return warnings
 }
 

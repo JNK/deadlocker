@@ -1,6 +1,6 @@
 name: A lock wait timeout leaves the transaction open
 category: Fundamentals
-tags: [lock-wait-timeout, error-1205, rollback-on-timeout]
+tags: [timeout, error-1205, record-lock, for-update, exclusive-lock]
 description: |
   innodb_lock_wait_timeout is set to 4 seconds here, so the blocked statement
   gives up quickly with error 1205.

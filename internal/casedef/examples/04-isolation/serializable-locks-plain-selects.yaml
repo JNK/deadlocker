@@ -1,6 +1,6 @@
 name: SERIALIZABLE turns every plain SELECT into a locking read
 category: Isolation levels
-tags: [serializable, shared-lock, isolation]
+tags: [serializable, isolation, shared-lock, next-key-lock]
 description: |
   Under SERIALIZABLE, InnoDB silently rewrites every plain SELECT as
   SELECT ... FOR SHARE (as long as autocommit is off, which it is inside a

@@ -1,6 +1,6 @@
 name: SELECT FOR SHARE then UPDATE deadlocks two identical transactions
 category: Deadlocks
-tags: [deadlock, for-share, for-update, lock-upgrade, error-1213]
+tags: [deadlock, for-share, for-update, lock-upgrade, lost-update, error-1213]
 description: |
   Read-check-write is the most natural transaction shape there is:
 

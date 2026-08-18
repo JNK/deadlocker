@@ -1,6 +1,6 @@
 name: Two indexes disagree about order, so "always ascending" deadlocks
 category: Deadlocks
-tags: [deadlock, secondary-index, lock-ordering, error-1213]
+tags: [deadlock, secondary-index, clustered-index, lock-ordering, error-1213]
 description: |
   "Always take locks in ascending order" is the standard cure for AB-BA. This
   scenario shows both sessions obeying it and deadlocking anyway.

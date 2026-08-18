@@ -1,6 +1,6 @@
 name: With detection off, a deadlock becomes a timeout
 category: Deadlocks
-tags: [deadlock, innodb_deadlock_detect, lock-wait-timeout, error-1205]
+tags: [deadlock, deadlock-detection, timeout, error-1205, lock-ordering]
 description: |
   Exactly the AB-BA deadlock, with innodb_deadlock_detect turned off.
 

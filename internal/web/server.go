@@ -224,6 +224,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/import", s.handleImportScenario)
 	mux.HandleFunc("GET /api/builtins", s.handleBuiltInCount)
 	mux.HandleFunc("POST /api/builtins", s.handleSeedBuiltIns)
+	mux.HandleFunc("POST /api/builtins/remove", s.handleRemoveBuiltIns)
 
 	// Scenario history. Every save is recorded, so an edit that turns out to be
 	// wrong is one click away from being undone.
@@ -263,6 +264,7 @@ func (s *Server) Routes() http.Handler {
 // handleEdit opens the editor on an existing scenario, saving in place.
 func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	pd := s.base("", "library")
+	pd.FormatDoc = markdown.Render(agentapi.FormatDoc)
 	c, ok := s.lib.Get(r.PathValue("id"))
 	if !ok {
 		s.renderMissing(w, "library", missingScenario(r.PathValue("id")))
@@ -313,7 +315,10 @@ type pageData struct {
 	ArchivedOutcome string
 
 	// Missing describes something that is not there, rendered as a full page.
-	Missing       *missingPage
+	Missing *missingPage
+	// FormatDoc is the scenario format reference, rendered from the same source
+	// the MCP resource and the assistant's prompt use.
+	FormatDoc     template.HTML
 	ArchivedLocks *engine.LockSnapshot
 	Steps         []*engine.StepResult
 	CaseSteps     []casedef.Step
@@ -585,6 +590,7 @@ func (s *Server) handleHistoryAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePlayground(w http.ResponseWriter, r *http.Request) {
 	pd := s.base("Playground", "playground")
+	pd.FormatDoc = markdown.Render(agentapi.FormatDoc)
 	pd.Source = starterYAML
 	if from := r.URL.Query().Get("from"); from != "" {
 		if c, ok := s.lib.Get(from); ok {

@@ -1,10 +1,12 @@
 package casedef
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -59,6 +61,55 @@ func BuiltInStatus(dir string) (total, present int) {
 		}
 	}
 	return total, present
+}
+
+// RemoveBuiltIns deletes the built-in scenarios from dir.
+//
+// Only files whose content still matches what ships in the binary are removed:
+// an edited built-in is your work now, and losing it to a tidy-up button would
+// be the worst thing this could do. It returns how many went and how many were
+// kept because they had been changed.
+func RemoveBuiltIns(dir string) (removed, kept int, err error) {
+	for rel := range builtIn {
+		target := filepath.Join(dir, filepath.FromSlash(rel))
+		onDisk, readErr := os.ReadFile(target)
+		if readErr != nil {
+			continue // not there; nothing to do
+		}
+		original, oErr := examples.ReadFile(path.Join("examples", rel))
+		if oErr != nil {
+			continue
+		}
+		if !bytes.Equal(bytes.TrimSpace(onDisk), bytes.TrimSpace(original)) {
+			kept++
+			continue
+		}
+		if rmErr := os.Remove(target); rmErr != nil {
+			return removed, kept, rmErr
+		}
+		removed++
+	}
+	pruneEmptyDirs(dir)
+	return removed, kept, nil
+}
+
+// pruneEmptyDirs removes directories left behind with nothing in them, so
+// removing the built-ins does not leave a tree of empty folders.
+func pruneEmptyDirs(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sub := filepath.Join(root, e.Name())
+		pruneEmptyDirs(sub)
+		if rest, err := os.ReadDir(sub); err == nil && len(rest) == 0 {
+			_ = os.Remove(sub)
+		}
+	}
 }
 
 // Seed copies the built-in scenarios into dir, skipping any file that already

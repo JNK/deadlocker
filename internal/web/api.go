@@ -308,6 +308,29 @@ func (s *Server) handleSeedBuiltIns(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRemoveBuiltIns deletes the shipped scenarios again, sparing any that
+// have been edited.
+func (s *Server) handleRemoveBuiltIns(w http.ResponseWriter, r *http.Request) {
+	removed, kept, err := casedef.RemoveBuiltIns(s.lib.Root)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := s.lib.Load(); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if removed > 0 {
+		s.api.Hub().Publish(agentapi.Activity{
+			Source: agentapi.SourceUI, Kind: agentapi.KindScenarioUpdated,
+			Summary: fmt.Sprintf("removed %d built-in scenario(s)", removed),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "removed": removed, "kept": kept,
+	})
+}
+
 // handleBuiltInCount reports how many built-in scenarios exist and how many are
 // already on disk, so the offer to import them can say what it will do.
 func (s *Server) handleBuiltInCount(w http.ResponseWriter, r *http.Request) {

@@ -172,6 +172,15 @@
     document.body.classList.toggle('is-picking-runs', on);
     if (compareBar) compareBar.hidden = !on;
     if (compareToggle) compareToggle.classList.toggle('is-active', on);
+
+    // Analyses and unparseable files are not runs, so while picking two runs
+    // they are noise. They come back the moment picking ends.
+    if (jobsWrap) {
+      jobsWrap.hidden = on || !jobsHost.querySelector('[data-job-id]');
+    }
+    var broken = document.getElementById('sidebar-broken');
+    if (broken) broken.hidden = on;
+
     paintPicks();
   }
 
@@ -316,9 +325,20 @@
       '</span>';
   }
 
+  var jobsCountEl = document.getElementById('analyses-count');
+
+  function paintJobsCount(n) {
+    if (jobsCountEl) {
+      jobsCountEl.textContent = n ? (n + ' analys' + (n === 1 ? 'is' : 'es')) : 'Analyses';
+    }
+  }
+
   function reconcileJobs(jobs) {
     if (!jobsHost) return;
-    jobsWrap.hidden = !jobs.length;
+    // While picking runs to compare, the run log is the only list that matters
+    // and everything else is in the way.
+    jobsWrap.hidden = !jobs.length || picking;
+    paintJobsCount(jobs.length);
 
     var existing = {};
     jobsHost.querySelectorAll('[data-job-id]').forEach(function (el) {

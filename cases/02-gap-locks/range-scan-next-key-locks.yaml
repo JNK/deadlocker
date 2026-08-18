@@ -1,6 +1,6 @@
 name: A range scan takes next-key locks over everything it reads
 category: Gap locks
-tags: [next-key-lock, range-scan, phantom]
+tags: [next-key-lock, range-scan, phantom, gap-lock, for-update]
 description: |
   Equality lookups lock one point. A range lookup locks the whole stretch it
   scanned — every record it read plus the gap before each one. That combination

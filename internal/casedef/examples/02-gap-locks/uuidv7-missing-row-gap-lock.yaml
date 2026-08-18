@@ -1,6 +1,6 @@
 name: SELECT FOR UPDATE on a missing UUIDv7 row blocks the next insert
 category: Gap locks
-tags: [gap-lock, uuidv7, select-for-update, insert-intention, supremum]
+tags: [gap-lock, uuidv7, for-update, insert-intention, supremum]
 docs:
   - title: InnoDB Locking — gap locks
     url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html#innodb-gap-locks

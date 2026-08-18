@@ -193,7 +193,14 @@
               so this is safe to run again: it only adds what is missing.
             </p>
             <p id="builtins-state" class="muted mono">checking…</p>
-            <button class="btn btn-primary" id="builtins-import" type="button">Import built-in scenarios</button>
+            <div class="page-actions">
+              <button class="btn btn-primary" id="builtins-import" type="button">Import built-in scenarios</button>
+              <button class="btn btn-ghost" id="builtins-remove" type="button">Remove them again</button>
+            </div>
+            <p class="muted">
+              Removing only deletes the ones still identical to what ships in the binary.
+              A built-in you have edited is your work, and is kept.
+            </p>
           </div>
         </div>
       </section>

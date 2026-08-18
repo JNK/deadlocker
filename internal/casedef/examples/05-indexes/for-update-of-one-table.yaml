@@ -1,6 +1,6 @@
 name: FOR UPDATE OF locks one side of a join
 category: Indexes
-tags: [for-update, join, lock-scope, for-update-of]
+tags: [for-update, join, lock-scope, record-lock]
 docs:
   - title: Locking reads — FOR UPDATE OF
     url: https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html

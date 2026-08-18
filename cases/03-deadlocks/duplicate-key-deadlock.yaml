@@ -1,6 +1,6 @@
 name: Three inserts of the same unique key deadlock
 category: Deadlocks
-tags: [deadlock, duplicate-key, unique-index, shared-lock]
+tags: [deadlock, duplicate-key, unique-index, shared-lock, insert, error-1213]
 description: |
   A deadlock with no UPDATE anywhere and no obvious lock ordering mistake. Three
   sessions insert the same unique key; the first rolls back; two of the

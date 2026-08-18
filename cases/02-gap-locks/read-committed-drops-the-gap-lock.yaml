@@ -1,6 +1,6 @@
 name: The same scenario under READ COMMITTED does not block
 category: Gap locks
-tags: [gap-lock, read-committed, isolation, uuidv7]
+tags: [gap-lock, read-committed, isolation, uuidv7, insert-intention]
 description: |
   Identical to "SELECT FOR UPDATE on a missing UUIDv7 row blocks the next
   insert", with one line changed: the isolation level is READ COMMITTED.

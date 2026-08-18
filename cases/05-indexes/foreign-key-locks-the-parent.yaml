@@ -1,6 +1,6 @@
 name: A foreign key makes the child lock the parent
 category: Indexes
-tags: [foreign-key, shared-lock, referential-integrity]
+tags: [foreign-key, shared-lock, insert, record-lock]
 description: |
   Inserting a child row takes a shared lock on the parent row it references.
   InnoDB needs that to guarantee the parent cannot be deleted or re-keyed

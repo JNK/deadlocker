@@ -1,6 +1,6 @@
 name: ORDER BY … LIMIT 1 can lock far more than one row
 category: Indexes
-tags: [limit, order-by, full-scan, record-lock, queue]
+tags: [order-by, full-scan, record-lock, queue, for-update, secondary-index, ddl]
 docs:
   - title: LIMIT Query Optimization
     url: https://dev.mysql.com/doc/refman/8.4/en/limit-optimization.html

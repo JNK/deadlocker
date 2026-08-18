@@ -113,14 +113,36 @@
       });
       if (!names.length) return;
 
+      // A filter bar longer than the list it filters is not a filter. The tail
+      // is one-scenario tags, which the search box already finds; they are kept
+      // behind "more" rather than dropped, and anything already selected stays
+      // visible however rare it is.
+      var TOP = 16;
+      var shown = names.slice(0, TOP);
+      tags.forEach(function (t) {
+        if (shown.indexOf(t) === -1 && counts[t]) shown.push(t);
+      });
+      var hidden = names.filter(function (t) { return shown.indexOf(t) === -1; });
+
       tagBar.hidden = false;
-      tagBar.innerHTML = names.map(function (t) {
+      var chip = function (t) {
         return '<button class="tag-toggle" type="button" data-tag="' + esc(t) + '">' +
           esc(t) + '<span class="tag-toggle-count">' + counts[t] + '</span></button>';
-      }).join('') +
+      };
+      tagBar.innerHTML = shown.map(chip).join('') +
+        (hidden.length
+          ? '<span class="tag-rest" hidden>' + hidden.map(chip).join('') + '</span>' +
+            '<button class="tag-more" type="button" data-tag-more>+' + hidden.length + ' more</button>'
+          : '') +
         '<button class="tag-clear" type="button" data-tag-clear hidden>clear</button>';
 
       tagBar.addEventListener('click', function (e) {
+        var more = e.target.closest('[data-tag-more]');
+        if (more) {
+          tagBar.querySelector('.tag-rest').hidden = false;
+          more.remove();
+          return;
+        }
         if (e.target.closest('[data-tag-clear]')) { tags = []; paintTags(); apply(); return; }
         var btn = e.target.closest('[data-tag]');
         if (!btn) return;

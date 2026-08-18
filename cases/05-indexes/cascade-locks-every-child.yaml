@@ -1,6 +1,6 @@
 name: ON DELETE CASCADE locks every child it will remove
 category: Indexes
-tags: [foreign-key, cascade, record-lock, fan-out]
+tags: [foreign-key, cascade, record-lock, delete, exclusive-lock]
 docs:
   - title: FOREIGN KEY constraints — referential actions
     url: https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html#foreign-key-referential-actions

@@ -1,6 +1,6 @@
 name: A gap lock blocks one range and nothing else
 category: Gap locks
-tags: [gap-lock, insert-intention, range]
+tags: [gap-lock, insert-intention, range-scan, for-update]
 description: |
   The UUIDv7 scenario is alarming because every new key lands in one gap. This
   scenario shows the flip side: a gap lock really is narrow. It just happens to

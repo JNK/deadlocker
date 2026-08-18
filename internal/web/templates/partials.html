@@ -113,7 +113,9 @@
   <!-- Analyses are batches of runs with a conclusion, so they get their own
        short list rather than being mixed into the run log. -->
   <div class="sidebar-analyses" id="sidebar-analyses" {{if not .Analyses}}hidden{{end}}>
-    <div class="sidebar-runs-head"><span class="nav-group-title">Analyses</span></div>
+    <div class="sidebar-runs-head">
+      <span class="nav-group-title" id="analyses-count">{{if .Analyses}}{{len .Analyses}} analys{{if eq (len .Analyses) 1}}is{{else}}es{{end}}{{else}}Analyses{{end}}</span>
+    </div>
     <nav id="sidebar-analyses-list">
       {{range .Analyses}}
       <a class="job-chip status-{{.Status}}" data-job-id="{{.ID}}" href="/analysis/{{.ID}}">
@@ -128,7 +130,7 @@
   </div>
 
   {{if .Broken}}
-  <div class="sidebar-broken">
+  <div class="sidebar-broken" id="sidebar-broken">
     <div class="nav-group-title">Will not parse</div>
     {{range $path, $err := .Broken}}
     <div class="broken-item" title="{{$err}}">

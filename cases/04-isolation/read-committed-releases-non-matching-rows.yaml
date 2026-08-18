@@ -1,6 +1,6 @@
 name: READ COMMITTED lets go of the rows that did not match
 category: Isolation levels
-tags: [read-committed, semi-consistent-read, full-scan, record-lock]
+tags: [read-committed, isolation, semi-consistent-read, full-scan, record-lock, current-read]
 docs:
   - title: Transaction isolation levels — READ COMMITTED
     url: https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html

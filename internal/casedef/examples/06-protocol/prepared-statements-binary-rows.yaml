@@ -1,6 +1,6 @@
 name: Prepared statements put the result set in the binary protocol
 category: Wire protocol
-tags: [prepared-statements, binary-protocol, com-stmt-execute, wire]
+tags: [prepared-statements, binary-protocol, wire-protocol, record-lock]
 description: |
   Every other scenario sends plain `COM_QUERY` text, because arguments are
   interpolated client-side. Setting `prepared: true` turns that off and the

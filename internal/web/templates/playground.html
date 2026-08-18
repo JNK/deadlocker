@@ -37,12 +37,15 @@
         <div class="panel-head">
           <h2>Scenario</h2>
           <div class="panel-head-actions">
-            <!-- Optional: with no path the file name is derived from the
-                 scenario's own name, which is a better answer than making
-                 someone invent one. -->
-            <input class="input input-sm" id="pg-path" spellcheck="false"
-                   placeholder="derived from the name"
-                   value="{{if .Editing}}{{.Case.Path}}{{end}}" {{if .Editing}}readonly{{end}}>
+            <!-- Editing writes back to the file it came from, and every write
+                 is a version, so there is nothing to decide and no field to
+                 offer. Creating derives the name from the scenario's own. -->
+            {{if .Editing}}
+            <span class="muted mono pg-path-static" title="Edits are written back here">{{.Case.Path}}</span>
+            <input type="hidden" id="pg-path" value="{{.Case.Path}}">
+            {{else}}
+            <input type="hidden" id="pg-path" value="">
+            {{end}}
             <span class="muted" id="pg-dirty">no changes</span>
             <button class="btn btn-sm{{if .Editing}} btn-primary{{end}}" id="pg-save" type="button" disabled>
               {{if .Editing}}Save changes{{else}}Save to library{{end}}
@@ -87,57 +90,17 @@
       </aside>
     </section>
 
+    <!-- The canonical format document, the same text served over MCP and given
+         to the assistant. It used to be a second copy written in HTML, which
+         could drift from the real one and did. -->
     <details class="panel pg-format">
       <summary class="panel-head"><h2>Format reference</h2></summary>
-      <div class="panel-body panel-body-flush">
-        <pre class="yaml small format-ref" data-yaml-view>name: Human readable title
-category: Gap locks          # optional; folder name is used otherwise
-description: |
-  Markdown. **Bold**, `code`, lists and headings all render
-  on the scenario page.
-tags: [gap-lock, insert-intention]
-
-mysql:
-  image: mysql:8.4
-  isolation: REPEATABLE READ  # or READ COMMITTED, SERIALIZABLE
-  lock_wait_timeout: 300      # seconds, per session
-  deadlock_detect: true       # global; false turns deadlocks into timeouts
-  prepared: false             # true sends COM_STMT_EXECUTE, binary result rows
-
-schema:
-  - CREATE TABLE t (...)
-
-seed:
-  - INSERT INTO t VALUES (...)
-
-actors:
-  - id: a
-    name: Request A
-    accent: blue              # blue amber violet teal rose
-  - id: b
-    name: Request B
-
-steps:
-  - actor: a
-    label: Open a transaction
-    sql: BEGIN
-    note: Shown next to the step in the timeline.
-    expect: ok                # ok blocks error deadlock timeout
-</pre>
-        <div class="help-note">
-          <h3>The ordering rule</h3>
-          <p>
-            A connection runs one statement at a time, so a blocked actor cannot accept its
-            next step. Put the statement that releases the lock — usually a
-            <code>COMMIT</code> on the other actor — before the blocked actor's next step.
-            The step pane flags this for you.
-          </p>
-          <h3>Stepping</h3>
-          <p>
-            Each step gets <strong>{{.Settle}}&#8239;ms</strong> to finish before it is
-            reported as blocked, and keeps running in the background after that.
-          </p>
-        </div>
+      <div class="panel-body">
+        <article class="prose">{{.FormatDoc}}</article>
+        <p class="muted">
+          Each step gets <strong>{{.Settle}}&#8239;ms</strong> to finish before it is
+          reported as blocked, and keeps running in the background after that.
+        </p>
       </div>
     </details>
 
